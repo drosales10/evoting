@@ -1,439 +1,316 @@
-# Referencia: Git Workflow (SMyEG / Squad)
+# Referencia eVoting: Git, PR y CI
 
-Documentación detallada para implementar o migrar flujos Git en proyectos similares.
+Consulta esta referencia al configurar GitHub, crear plantillas, definir gates o coordinar trabajo paralelo.
 
-## Arquitectura de capas
+## Flujo recomendado
 
 ```mermaid
-flowchart TB
-  subgraph local [Local — sin hooks]
-    DEV["Desarrollo en branch"]
-    QA["pnpm qa:module"]
-    COMMIT["Conventional commit + issue ref"]
-  end
-
-  subgraph github [GitHub]
-    ISSUE["Issue + labels"]
-    PR["Pull Request + template"]
-    GUARD["PR Guardrails CI"]
-    REVIEW["Review Iris + especialistas"]
-    MERGE["Merge a master/dev"]
-  end
-
-  subgraph squad_auto [Automations Squad]
-    TRIAGE["squad-triage"]
-    LABELS["sync-squad-labels"]
-    ENFORCE["squad-label-enforce"]
-    RELEASE["squad-release / promote"]
-  end
-
-  ISSUE --> DEV --> QA --> COMMIT --> PR
-  PR --> GUARD --> REVIEW --> MERGE
-  ISSUE --> TRIAGE --> LABELS
-  MERGE --> RELEASE
+flowchart LR
+  ISSUE[Issue] --> BRANCH[Feature branch]
+  BRANCH --> LOCAL[Gate local]
+  LOCAL --> COMMIT[Commit]
+  COMMIT --> PR[Pull request]
+  PR --> CI[CI real]
+  CI --> REVIEW[Review por riesgo]
+  REVIEW --> MERGE[Merge protegido]
+  MERGE --> DEPLOY[Deploy + evidencia]
 ```
 
-## Modelos de branching
+## Triage por riesgo
 
-### Modelo operativo SMyEG (actual)
-
-```
-master (default)
-├── feat/landing-cliente-repositorio
-├── squad/{n}-{slug}
-└── repo
-```
-
-- Rama default: `master` (`origin/HEAD -> origin/master`)
-- Feature branches desde `master`
-- Merge target: `master`
-- README referencia `git push origin master` para docs Mintlify
-
-### Modelo Squad (prescriptivo / plantilla)
-
-```
-dev ──→ preview ──→ main (tagged releases)
-  └──→ insider (early access)
-```
-
-| Rama | Propósito |
-|---|---|
-| `dev` | Integración — todo el trabajo feature |
-| `preview` | Pre-release (sin `.squad/` / `.ai-team/`) |
-| `main` | Release estable, tagged |
-| `insider` | Early-access sincronizado desde dev |
-
-**Promoción** (`squad-promote.yml`, manual dispatch):
-- `dev → preview`: merge con stripping de `.squad/`, `.ai-team/`
-- `preview → main`: valida CHANGELOG + ausencia de archivos forbidden
-
-**Hotfixes:** `hotfix/{slug}` desde `main`, PR a `dev`, cherry-pick a `main` si urgente.
-
-**Gap conocido:** plantillas Squad asumen `dev/preview/main`; muchos clones operan solo con `master`.
-
-## Issue → Branch → PR → Merge
-
-### 1. Crear issue
-
-Plantillas en `.github/ISSUE_TEMPLATE/`:
-
-| Template | Prefix | Labels default |
+| Riesgo | Ejemplos | Requisitos |
 |---|---|---|
-| `01-crud-feature.md` | `[CRUD]` | `squad`, `area:crud` |
-| `02-geospatial-change.md` | `[GEO]` | `squad`, `area:geo`, `needs:data-platform-check` |
-| `03-dependency-update.md` | `[DEPS]` | `squad`, `area:deps`, `needs:compatibility-check` |
-| `04-security-permissions-incident.md` | `[SECURITY]` | `squad`, `area:security`, `needs:permissions-check` |
-| `05-client-tarifas-regression.md` | `[CLIENTE-TARIFAS]` | `squad`, `area:cliente`, `needs:mintlify-update` |
+| Bajo | Copy, docs, estilos sin lógica | Lint/build afectado + QA proporcional |
+| Medio | CRUD de planchas, import padrón, mapa admin | Unit/integration + ownership + tenant |
+| Alto | Auth/MFA, emisión, urna, tally, claves, migración | Threat review, pruebas de concurrencia, revisores especializados |
 
-`config.yml`: `blank_issues_enabled: false`.
-
-### 2. Triage y asignación
+Etiquetas sugeridas:
 
 ```text
-Label squad → squad-triage.yml → Helena auto-triage → squad:{member}
-Label squad:{member} → squad-issue-assign.yml → comentario + copilot assign
+type:feature | type:bug | type:security | type:migration | type:docs
+area:auth | area:voting | area:ballot | area:tally | area:geo | area:data | area:frontend
+priority:p0 | priority:p1 | priority:p2
+needs:security-review | needs:data-review | needs:geo-review | needs:docs
 ```
 
-Labels sincronizados desde `.squad/team.md` vía `sync-squad-labels.yml`.
+No usar una label `needs:*` como sustituto de asignar al revisor; debe bloquear merge hasta resolverse.
 
-### 3. Branch
+## Plantilla de issue
 
-```bash
-# SMyEG (master)
-git checkout master && git pull origin master
-git checkout -b squad/42-add-profile-api
-
-# Squad (dev)
-git checkout dev && git pull origin dev
-git checkout -b squad/42-add-profile-api
-```
-
-### 4. Commits
-
-```
-{type}({scope}): {descripcion} (#{issue-number})
-
-{explicacion detallada si necesaria}
-
-Closes #{issue-number}
-
-Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
-```
-
-Tipos: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `style`, `build`, `ci`
-
-Ejemplos reales:
-```
-fix: corrige stamp bug (#195)
-docs: actualiza portal Mintlify
-chore: promote dev → preview (v0.1.0)
-```
-
-**Sin enforcement:** no hay commitlint, husky, ni lint-staged.
-
-### 5. Push y PR
-
-```bash
-git push -u origin squad/42-add-profile-api
-gh pr create --base master --title "feat: add profile API" --body-file pr-body.md
-gh pr ready   # sacar de Draft
-```
-
-Body mínimo para pasar Guardrails:
 ```markdown
-## Summary
-- Issue relacionado: #42
+## Objetivo
 
-## Evidence
-### Technical validation (mandatory)
-- [x] pnpm lint
-- [x] pnpm exec tsc --noEmit
-- [x] pnpm test:all
-- [x] pnpm build
+## Contexto electoral
+- Organización/tenant:
+- Estado de elección afectado:
+- Roles afectados:
+
+## Criterios de aceptación
+- [ ] ...
+
+## Riesgos
+- [ ] Identidad/PII
+- [ ] Secreto del voto
+- [ ] Doble voto/concurrencia
+- [ ] Migración/PostGIS
+- [ ] Publicación territorial
+
+## Validación esperada
+- pytest:
+- Playwright:
+- Evidencia manual:
 ```
 
-### 6. Review y merge
+## Plantilla de pull request
 
-- PR Guardrails en verde
-- Sin labels `needs:*`
-- Iris + especialista por área (Vera, Dario, Maia, Otto, Gaia)
-- Merge squash o merge commit según política del repo
+```markdown
+## Resumen
+- Closes #<issue>
+- Tipo de cambio:
+- Riesgo:
 
-## PR Guardrails — detalle
+## Decisiones
+- ...
 
-Archivo: `.github/workflows/pr-guardrails.yml`
+## Validación backend
+- [ ] `python -m ruff check apps/backend`
+- [ ] `python -m black --check apps/backend`
+- [ ] `python -m mypy apps/backend/app`
+- [ ] `python -m pytest apps/backend/tests`
 
-Triggers: `opened`, `edited`, `synchronize`, `reopened`, `ready_for_review`, `labeled`, `unlabeled`
+## Validación frontend
+- [ ] `pnpm --dir apps/frontend lint`
+- [ ] `pnpm --dir apps/frontend exec tsc --noEmit`
+- [ ] `pnpm --dir apps/frontend build`
+- [ ] Playwright si aplica
 
-Validaciones (via `actions/github-script@v7`):
+## Seguridad electoral
+- [ ] Aislamiento por organización
+- [ ] Permisos/ownership/estado electoral
+- [ ] Sin PII o correladores en urna/logs
+- [ ] Sin resultados prematuros
 
-```javascript
-// 1. No draft
-if (pr.draft) fail();
+## Datos y despliegue
+- [ ] Migración Alembic revisada
+- [ ] Estrategia de rollback o roll-forward
+- [ ] Compatibilidad app/schema evaluada
 
-// 2. No needs:* labels
-const blockingNeeds = labels.filter(n => n.startsWith('needs:'));
-if (blockingNeeds.length) fail();
-
-// 3. Issue reference
-const hasIssueRef =
-  /Issue relacionado:\s*(?:#\d+|https?:\/\/)/i.test(body) ||
-  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+\b/i.test(body) ||
-  /\B#\d+\b/.test(body);
-
-// 4. Checkboxes marcados
-const requiredChecks = [
-  'pnpm lint',
-  'pnpm exec tsc --noEmit',
-  'pnpm test:all',
-  'pnpm build'
-];
-// pattern: - [x] {check}
+## Evidencia
+- Logs resumidos, capturas o reportes sin secretos/PII.
 ```
-
-**Limitación:** valida metadatos del PR, no ejecuta lint/tests/build en CI.
-
-## Gate de calidad local
-
-```bash
-pnpm qa:module
-# = pnpm lint && pnpm exec tsc --noEmit && pnpm test:all && pnpm build
-```
-
-Scripts relacionados (lifecycle npm, no git hooks):
-- `predev` / `prebuild` → `pnpm guard:admin-geo-routes`
-- `build:clean` → limpia `.next` corrupto
-
-No hay scripts `git add/commit/push` en `package.json`.
-
-## Hooks Git — estado
-
-| Herramienta | Estado |
-|---|---|
-| `.husky/` | No existe |
-| `husky` | No en package.json |
-| `lint-staged` | No |
-| `commitlint` | No |
-| `prepare` script | No |
-
-Alternativa para agentes Scribe: validación manual de secretos antes de commit (skill `secret-handling`), no hook automatizado.
-
-## Worktrees multi-agente
-
-### Cuándo usar
-
-| Escenario | Estrategia |
-|---|---|
-| 1 issue | checkout normal |
-| 2+ issues simultáneos | worktree por issue |
-| Multi-repo | clones hermanos |
-
-### Setup
-
-```bash
-git fetch origin master   # o dev
-git worktree add ../smyeg-195 -b squad/195-fix-stamp-bug origin/master
-git worktree add ../smyeg-193 -b squad/193-refactor-loader origin/master
-```
-
-### Reglas
-
-- Cada worktree: branch propia, PR independiente
-- `.squad/` en cada worktree: **append only**
-- `.gitattributes` con `merge=union` reconcilia merges concurrentes
-
-### Cleanup
-
-```bash
-git worktree remove ../smyeg-195
-git branch -d squad/195-fix-stamp-bug
-git push origin --delete squad/195-fix-stamp-bug
-git worktree prune
-```
-
-## .gitattributes
-
-```
-.squad/decisions.md merge=union
-.squad/agents/*/history.md merge=union
-.squad/log/** merge=union
-.squad/orchestration-log/** merge=union
-```
-
-Permite merge concurrente de archivos append-only entre worktrees/ramas.
-
-## .gitignore — inventario
-
-| Categoría | Patrones |
-|---|---|
-| Dependencias | `/node_modules`, `.pnp.*`, `.yarn/*` |
-| Build Next.js | `/.next/`, `/out/`, `/build` |
-| Env/secrets | `.env*` |
-| TypeScript | `*.tsbuildinfo`, `next-env.d.ts` |
-| Prisma generado | `/src/generated/prisma` |
-| Uploads | `/public/uploads` |
-| Mobile | `*.apk` |
-| Docs internos | `/docs`, `/internal-docs` |
-| Scripts | `/scripts` (whitelist: 4 archivos) |
-| OpenSpec | `/openspec`, `.openspec` |
-| Squad runtime | `.squad/orchestration-log/`, `.squad/log/`, `.squad/decisions/inbox/`, `.squad/sessions/`, `.squad-workstream` |
-
-Promoción preview/main: workflows eliminan `.squad/` del árbol publicado.
-
-## Labels — namespaces completos
-
-Sincronizados desde `.squad/team.md`:
-
-| Namespace | Valores |
-|---|---|
-| `squad` | inbox triage |
-| `squad:{member}` | helena, bruno, vera, gaia, iris, dario, maia, otto, nico, alma, livia, teo, nadia, scribe |
-| `squad:copilot` | coding agent |
-| `go:` | yes, no, needs-research |
-| `release:` | v0.4.0, v0.5.0, backlog |
-| `type:` | feature, bug, spike, docs, chore, epic |
-| `priority:` | p0, p1, p2 |
-| `area:` | crud, geo, deps, security, cliente, docs |
-| `needs:` | permissions-check, data-platform-check, compatibility-check, mintlify-update |
-| Señales | `bug`, `feedback` |
-
-Exclusividad enforced por `squad-label-enforce.yml`.
-
-## Ownership matrix (extracto)
-
-| Repo Area | DRI | Reviewer Gate |
-|---|---|---|
-| `src/app/api/**` | Bruno | Iris |
-| `prisma/**` | Dario | Iris |
-| `src/workers/**` | Gaia | Iris |
-| `src/app/cliente/**` | Livia | Iris |
-| `mintlify-docs/**` | Maia | Iris |
-| `package.json` + lockfile | Otto | Iris |
-| Seguridad multiorg | Vera | Iris |
 
 ## Workflows GitHub Actions
 
-| Workflow | Trigger | Función |
-|---|---|---|
-| `pr-guardrails.yml` | PR events | Metadatos PR |
-| `squad-ci.yml` | PR a dev/preview/main/insider; push dev/insider | `node --test test/*.test.js` |
-| `sync-squad-labels.yml` | Push `.squad/team.md`; manual | Sync labels |
-| `squad-triage.yml` | Issue labeled `squad` | Auto-triage Helena |
-| `squad-label-enforce.yml` | Issue labeled | Exclusividad labels |
-| `squad-issue-assign.yml` | Issue labeled `squad:*` | Asignación + Copilot |
-| `squad-heartbeat.yml` | Cron L 8:30; events | Auto-triage backlog |
-| `squad-promote.yml` | Manual | dev→preview→main |
-| `squad-release.yml` | Push main | Tag + Release desde package.json |
-| `squad-preview.yml` | Push preview | Valida CHANGELOG, no `.squad/` |
-| `squad-insider-release.yml` | Push insider | Tag prerelease |
-| `squad-docs.yml` | Push preview (docs/**) | GitHub Pages |
+Estructura sugerida:
 
-**Gap:** `squad-ci.yml` no ejecuta `pnpm qa:module`; gate real = autor + checklist + review.
+```text
+.github/workflows/
+├── backend-ci.yml
+├── frontend-ci.yml
+├── e2e.yml
+├── migrations-ci.yml
+├── security-ci.yml
+└── pr-guardrails.yml
+```
 
-## Reviewer protocol
+### Backend CI
 
-Skill: `.squad/templates/skills/reviewer-protocol/SKILL.md`
+```yaml
+name: Backend CI
+on:
+  pull_request:
+    paths:
+      - "apps/backend/**"
+      - "pyproject.toml"
+      - "requirements*.txt"
 
-- Autor original **no puede** auto-revisar tras rechazo
-- Debe intervenir otro agente
-- Deadlock → escalar al usuario
+permissions:
+  contents: read
 
-## Windows — reglas de commit
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:15-3.4
+        env:
+          POSTGRES_DB: evoting_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r apps/backend/requirements.txt
+      - run: python -m ruff check apps/backend
+      - run: python -m black --check apps/backend
+      - run: python -m mypy apps/backend/app
+      - run: python -m pytest apps/backend/tests
+```
 
-De `.squad/templates/skills/windows-compatibility/SKILL.md`:
+Pinear versiones exactas de dependencias del proyecto. El snippet es estructural, no reemplaza el lock/resolver elegido.
 
-- No usar `git -C {path}` en Windows
-- No usar `\n` en `git commit -m` (PowerShell falla silenciosamente)
-- Usar archivo temporal + `git commit -F $msgFile`
+### Frontend CI
+
+```yaml
+name: Frontend CI
+on:
+  pull_request:
+    paths:
+      - "apps/frontend/**"
+      - "pnpm-lock.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/frontend lint
+      - run: pnpm --dir apps/frontend exec tsc --noEmit
+      - run: pnpm --dir apps/frontend build
+```
+
+### E2E
+
+- Instalar navegadores con `playwright install --with-deps`.
+- Usar usuarios y elecciones sintéticos.
+- No grabar traces/videos que contengan secretos; sanitizar artefactos.
+- Ejecutar flujos MFA con proveedor simulado o inbox de test.
+- Probar doble clic, refresh, sesión expirada y receipt verification.
+
+### Migraciones CI
+
+1. Levantar PostgreSQL/PostGIS vacío.
+2. `alembic upgrade head`.
+3. Cargar fixtures mínimos.
+4. Verificar `alembic check`.
+5. Opcional: probar upgrade desde la última versión publicada con snapshot sintético.
+6. Nunca ejecutar migraciones de PR contra staging/producción.
+
+## Branch protection
+
+Configurar en `main`:
+- pull request obligatorio;
+- checks requeridos reales;
+- conversación resuelta;
+- al menos un revisor, más gates por CODEOWNERS o proceso;
+- impedir force push y deletion;
+- administradores sujetos a la política cuando sea viable;
+- firmas o verified commits si la organización lo exige.
+
+## CODEOWNERS sugerido
+
+```text
+/apps/backend/app/auth/              @security-team
+/apps/backend/app/domain/ballot/     @security-team @backend-team
+/apps/backend/app/domain/tally/      @security-team @backend-team
+/apps/backend/alembic/               @data-team
+/apps/backend/app/geo/               @geo-team @security-team
+/apps/frontend/src/app/(voter)/      @frontend-team @security-team
+/.github/workflows/                  @release-team @security-team
+```
+
+Adaptar a usuarios/equipos reales; no copiar aliases inexistentes.
+
+## Manejo de secretos
+
+Prohibido versionar:
+- claves privadas de elección;
+- shares de custodios;
+- secretos JWT/MFA;
+- credenciales de base de datos;
+- padrones o exports;
+- tokens Mapbox privados;
+- dumps con datos reales.
+
+Antes de commit:
 
 ```powershell
-$msg = @"
-feat(api): agrega endpoint de perfil (#42)
-
-Closes #42
-"@
-$msg | Out-File -Encoding utf8 .git/COMMIT_MSG
-git commit -F .git/COMMIT_MSG
-Remove-Item .git/COMMIT_MSG
+git diff --cached --name-only
+git diff --cached
 ```
 
-## Lo que NO existe en SMyEG
+Configurar secret scanning y push protection en GitHub. Los fixtures usan dominios reservados y documentos ficticios.
 
-- Bugbot / integración Cursor Bugbot en repo
-- CODEOWNERS
-- Dependabot config
-- Husky / lint-staged / commitlint
-- Hooks pre-commit automatizados
-- CI que ejecute el gate completo `pnpm qa:module`
+## Estrategia de commits
 
-## Plantilla mínima para otro proyecto
+Commits pequeños y coherentes:
 
-### `.github/PULL_REQUEST_TEMPLATE.md`
-
-```markdown
-## Summary
-- Issue relacionado: #<numero>
-
-## Technical validation
-- [ ] pnpm lint
-- [ ] pnpm exec tsc --noEmit
-- [ ] pnpm test:all
-- [ ] pnpm build
+```text
+feat(auth): agrega contrato MFA del elector (#42)
+test(auth): cubre expiración y replay de OTP (#42)
+docs(auth): documenta cookies y CSRF (#42)
 ```
 
-### `.github/workflows/pr-guardrails.yml`
+No dividir artificialmente si deja el árbol roto. Cada commit debería ser revisable y, cuando sea posible, pasar tests relevantes.
 
-Copiar de SMyEG y adaptar `requiredChecks` al stack del proyecto.
+## Worktrees multiagente
 
-### `AGENTS.md` (sección Git)
+Reglas:
+- un issue y branch por worktree;
+- no editar el mismo archivo desde dos worktrees sin coordinación;
+- registrar contratos compartidos antes del fan-out;
+- no compartir puertos ni bases de datos de test;
+- cada worktree conserva su propia evidencia.
 
-```markdown
-## Git
-- Gate pre-PR: `pnpm qa:module`
-- Commits en español, conventional commits con `(#issue)`
-- PRs: template completo, no Draft, PR Guardrails verde
-- Limpiar labels `needs:*` antes de merge
+Ejemplo Windows:
+
+```powershell
+git fetch origin
+git worktree add "..\evoting-101" -b feat/101-election-crud origin/main
+git worktree add "..\evoting-102" -b test/102-election-api origin/main
 ```
 
-### `.gitattributes` (si hay estado compartido multi-agente)
+## Releases y migraciones
 
-```
-.team/decisions.md merge=union
-.team/log/** merge=union
-```
+Orden típico compatible:
+1. Backup verificado cuando el riesgo lo requiere.
+2. Migración expand compatible con versión actual.
+3. Deploy de aplicación nueva.
+4. Backfill controlado/observable.
+5. Activación de feature flag.
+6. Migración contract en release posterior.
 
-## Prompts sugeridos para agentes
+No ejecutar downgrade destructivo como rollback automático. Preferir roll-forward.
 
-**Nuevo feature:**
-> Crea issue con plantilla, branch `squad/{n}-{slug}` desde master, implementa, `pnpm qa:module`, PR con template y checkboxes marcados, referencia `#n`.
+## Incidentes críticos
 
-**Fix urgente:**
-> Branch `hotfix/{slug}` desde master, fix mínimo, PR sin Draft, Guardrails verde, review Iris.
+Para `hotfix/*`:
+- alcance mínimo;
+- issue de incidente o referencia equivalente;
+- no saltar pruebas críticas;
+- review de seguridad si afecta auth/urna/tally;
+- plan de despliegue y reversión;
+- retrospectiva posterior.
 
-**Multi-issue paralelo:**
-> Worktree por issue, append-only en archivos de estado, PRs independientes, cleanup post-merge.
+## Checklist de CI seguro
 
-**Migrar repo sin flujo:**
-> Añadir PR template + pr-guardrails.yml + documentar gate local + convención commits + verificar rama default.
-
-**Commit en Windows:**
-> Usar `git commit -F` con archivo UTF-8, nunca `-m` multilínea en PowerShell.
-
-## Mapa de archivos SMyEG
-
-```
-.github/PULL_REQUEST_TEMPLATE.md
-.github/workflows/pr-guardrails.yml
-.github/workflows/squad-*.yml
-.github/ISSUE_TEMPLATE/
-.squad/routing.md
-.squad/team.md
-.squad/templates/skills/git-workflow/SKILL.md
-.squad/templates/issue-lifecycle.md
-.squad/operations/helena-ralph-runbook.md
-.gitattributes
-.gitignore
-AGENTS.md
-README.md
-package.json (qa:module)
+```text
+- [ ] permissions mínimos
+- [ ] actions confiables y versionadas
+- [ ] dependencias con lock/frozen install
+- [ ] sin secrets en PRs de forks
+- [ ] artefactos sanitizados
+- [ ] PostgreSQL/PostGIS efímero
+- [ ] pytest y Playwright con datos sintéticos
+- [ ] migration upgrade verificado
+- [ ] checks requeridos en branch protection
+- [ ] secret scanning habilitado
 ```

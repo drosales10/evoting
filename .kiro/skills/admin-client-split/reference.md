@@ -1,325 +1,307 @@
-# Referencia: división Admin / Cliente (SMyEG)
+# Referencia eVoting: superficies, autenticación y autorización
 
-Documentación detallada del patrón. Leer cuando se necesite contexto profundo para implementar o migrar.
+Lee esta referencia cuando una tarea afecte más de una superficie, cambie claims de sesión, añada permisos o toque el flujo de emisión.
 
-## Diagrama de arquitectura
-
-```mermaid
-flowchart TB
-  subgraph auth [Autenticación]
-    AL["/admin/login<br/>admin-credentials"]
-    CL["/login<br/>client-credentials + OAuth"]
-  end
-
-  subgraph admin_area [Área Admin]
-    PROXY["proxy.ts<br/>RBAC + userType=ADMIN"]
-    DASH["(dashboard)/layout.tsx<br/>Sidebar + CASL"]
-    API_A["/api/forest/*, /api/users/*<br/>requireAuth + requirePermission"]
-  end
-
-  subgraph client_area [Área Cliente]
-    WELCOME["/welcome/*<br/>Landing por org"]
-    CLIENTE["/cliente/*<br/>ClientExperienceShell"]
-    LANDING["landing-context.ts<br/>Org activa + submodules"]
-    API_C["/api/cliente/*<br/>requireClientAreaOrganization"]
-  end
-
-  AL --> PROXY --> DASH --> API_A
-  CL --> WELCOME --> CLIENTE
-  CLIENTE --> LANDING --> API_C
-  WELCOME --> LANDING
-```
-
-## Modelo de datos
-
-### User (admin)
-
-```prisma
-model User {
-  organizationId  String?
-  // UserRole → Role → RolePermission → Permission → Module
-}
-```
-
-Acciones RBAC: `CREATE | READ | UPDATE | DELETE | EXPORT | ADMIN`.
-Roles predefinidos: `SUPER_ADMIN`, `ADMIN`, `CLIENT_MANAGER`, `GERENTE_CAMPO`, `CONTADOR`, `USER`.
-
-### ClientUser (cliente)
-
-```prisma
-model ClientUser {
-  email           String @unique
-  passwordHash    String
-  status          ClientUserStatus
-  mobileSessions  ClientMobileSession[]
-}
-```
-
-Sin `organizationId`, sin roles ni permisos en sesión JWT.
-
-## Auth NextAuth — detalle
-
-```typescript
-// src/lib/auth.ts
-export const { handlers, auth, signIn, signOut } = NextAuth({
-  session: { strategy: "jwt" },
-  pages: { signIn: "/admin/login" },
-  providers: [
-    Credentials({
-      id: "admin-credentials",
-      credentials: {
-        identifier: { type: "text" },
-        password: { type: "password" },
-        organizationId: { type: "text" }, // obligatorio para admin
-      },
-      // authorize → prisma.user + getUserRolesAndPermissions
-    }),
-    Credentials({
-      id: "client-credentials",
-      // authorize → prisma.clientUser
-    }),
-    // Google/GitHub/Facebook → solo ClientUser
-  ],
-});
-```
-
-Sesión JWT incluye:
-- `userType`: `"ADMIN"` | `"CLIENT"` | `"SERVICE"`
-- Admin: `roles[]`, `permissions[]`, `organizationId`, `organizationName`
-- Cliente: `roles: []`, `permissions: []`
-
-## Proxy — guard de red
-
-```typescript
-// src/proxy.ts
-const adminProtectedRoutes = [
-  "/admin/geovisor", "/dashboard", "/roles", "/users",
-  "/usuarios-clientes", "/organizaciones", "/patrimonio-forestal",
-  "/activos-mediciones", "/configuracion-forestal", "/settings", "/audit",
-];
-
-const clientProtectedRoutes: string[] = [];
-
-const routeModuleMap = [
-  { prefix: "/dashboard", module: "dashboard" },
-  { prefix: "/users", module: "users" },
-  { prefix: "/usuarios-clientes", module: "client-users" },
-  { prefix: "/patrimonio-forestal", module: "forest-patrimony" },
-  // ...
-];
-```
-
-Flujo:
-1. `/admin` → redirect login o dashboard
-2. Ruta admin sin token ADMIN → `/admin/login?next=…`
-3. RBAC por módulo → `/unauthorized` si no hay permiso `read`
-4. Restricción org "Por defecto" para rutas forestales (no SUPER_ADMIN)
-5. Usuario logueado en login pages → redirect según `userType`
-
-## Layout admin
-
-```typescript
-// src/app/(dashboard)/layout.tsx
-const nav = [
-  { href: "/dashboard", label: "Geovisor", module: "dashboard" },
-  { href: "/organizaciones", label: "Organizaciones", module: "organizations", onlyAdmin: true },
-  { href: "/users", label: "Usuarios", module: "users", adminOrGerente: true },
-  { href: "/usuarios-clientes", label: "Usuarios cliente", module: "client-users", adminOrGerente: true },
-  // ...
-];
-
-if (!session?.user?.id && !rolUsuario) {
-  redirect("/admin/login");
-}
-
-const ability = buildAbilityFromPermissions(permissions);
-// nav filtrada: ability.can("read", item.module)
-```
-
-Cookies auxiliares post-login admin: `RolUsuario`, `OrgName`, `EmailUsuario`.
-
-## Shell cliente
-
-```tsx
-// src/components/client/ClientExperienceShell.tsx
-<Theme accentColor="jade" grayColor="sand" appearance="inherit">
-  <div className="client-atmosphere min-h-screen text-foreground">
-    <ClientNavbar />
-    <main className="mx-auto max-w-7xl px-4">{children}</main>
-  </div>
-</Theme>
-```
-
-Clases CSS cliente: `client-atmosphere`, `client-orb`, `client-grid`, `client-panel`.
-Dark mode: `dark:border-white/10`, toggle en `ClientUserMenu`.
-
-## Landing context
-
-```typescript
-// src/lib/landing-context.ts
-export async function resolveActiveLandingOrganization(preferredId?) {
-  // 1. preferredId (query param)
-  // 2. activeLandingOrganizationId (config global)
-  // 3. org por defecto por nombre
-  // 4. primera org activa
-}
-
-export async function resolveLandingContext(preferredId?) {
-  const organization = await resolveActiveLandingOrganization(preferredId);
-  return {
-    organization,
-    templateHref,
-    submodules: normalizeSubmodules(config.clientSubmodulesValue).filter(i => i.isActive),
-    appTitle,
-  };
-}
-```
-
-## Guard API cliente
-
-```typescript
-// src/lib/cliente/require-client-area-organization.ts
-export async function requireClientAreaOrganization(moduleLabel, req?) {
-  const orgIdFromQuery = req ? new URL(req.url).searchParams.get("organizationId") : null;
-  const landingContext = await resolveLandingContext(orgIdFromQuery);
-
-  if (!landingContext?.organization.id) {
-    return { error: fail(`No hay organización activa para ${moduleLabel}`, 404) };
-  }
-
-  return { landingContext };
-}
-```
-
-## API helpers admin
-
-```typescript
-// src/lib/api-helpers.ts
-export async function requireAuth() {
-  // 1. Sesión JWT NextAuth
-  // 2. Bearer token SINIIF (SERVICE)
-  // 3. Sesión móvil cliente (client_mobile_sessions)
-  // 4. Fallback cookie EmailUsuario (legacy)
-}
-
-export async function requirePermission(permissions, moduleSlug, action) {
-  if (!hasPermission(permissions, moduleSlug, action)) {
-    return { error: fail("Forbidden", 403) };
-  }
-}
-```
-
-## Nav cliente dinámica
-
-```typescript
-// src/components/client/ClientNavbar.tsx
-const navLinks = useMemo(() => {
-  const dynamicLinks = (landingContext?.submodules ?? [])
-    .filter(item => item.isActive)
-    .sort((a, b) => a.order - b.order)
-    .map(item => ({ href: item.href, label: item.label }));
-
-  return landingContext
-    ? [{ href: "/welcome", label: "Inicio" }, ...dynamicLinks]
-    : [{ href: "/welcome", label: "Inicio" }];
-}, [landingContext]);
-```
-
-Submodules configurables desde admin en `settings/system`:
-
-```typescript
-const KNOWN_CLIENT_SUBMODULE_ROUTES = [
-  { label: "Tarifas", href: "/cliente/tarifas" },
-  { label: "Hidrológico", href: "/cliente/hidrologico" },
-  { label: "Biodiversidad", href: "/cliente/biodiversidad" },
-  { label: "Alertas", href: "/cliente/alertas-amenazas" },
-  { label: "Colector", href: "/cliente/colector-datos" },
-  { label: "Geovisor", href: "/cliente/geovisor" },
-];
-```
-
-## State management
-
-| Store | Ubicación | Área | Persistencia |
-|---|---|---|---|
-| `authStore` | `src/stores/` | Admin | No |
-| `uiStore` | `src/stores/` | Admin (sidebar, tema) | localStorage |
-| `dashboardStore` | `src/stores/` | Admin (widgets) | No |
-| `useGeovisorStore` | `src/store/` | Admin + Cliente | — |
-| `geovisor-client-*.ts` | `src/lib/` | Cliente | localStorage |
-
-Cliente no usa Zustand global salvo casos puntuales. Prefiere React state + fetch + localStorage.
-
-## Geovisor duplicado
-
-```
-admin/geovisor/     → import geo, jobs N1-N3, capas operativas
-cliente/geovisor/   → MapView, ScriptRunner GEE, sidebar stats
-store/useGeovisorStore → tipos compartidos, estado parcial
-```
-
-Admin opera; cliente explora. No forzar un solo componente.
-
-## Multi-tenancy
-
-| Área | Resolución de org |
-|---|---|
-| Admin | `session.user.organizationId`. SUPER_ADMIN ve todas. |
-| Cliente | Landing context (config + query param). No de sesión ClientUser. |
-| API admin | `session.user.organizationId` + checks SUPER_ADMIN |
-| API cliente | `landingContext.organization.id` |
-
-## Naming conventions
-
-| Patrón | Ejemplo | Significado |
-|---|---|---|
-| Route group | `(dashboard)/users` → `/users` | Backoffice sin prefijo |
-| Prefijo admin | `/admin/login` | Entry admin |
-| Prefijo cliente | `/cliente/biodiversidad` | UI cliente (español URL) |
-| Components | `components/client/ClientNavbar` | UI cliente (inglés carpeta) |
-| Lib helpers | `lib/cliente/require-*` | Helpers área cliente |
-| Lib adapters | `lib/client/hidromet-charts` | Datos/adaptadores cliente |
-| API español | `/api/cliente/alertas` | Lectura pública scoped |
-| API inglés | `/api/client/tariffs` | Auth cliente |
-| Repos | `client-alerts-repository` | Queries scoped org landing |
-| Repos | `admin-geo-repository` | Operaciones admin |
-| Validations | `client-alerts.schema.ts` | Zod schemas cliente |
-| CSS | `client-panel`, `client-atmosphere` | Design system cliente |
-
-## Flujo de acceso
+## Diagrama de confianza
 
 ```mermaid
-flowchart TD
-  ROOT["/"] -->|sin sesión| WELCOME["/welcome"]
-  ROOT -->|ADMIN| DASH["/(dashboard)/*"]
-  ROOT -->|CLIENT| WELCOME
-  ADMIN_LOGIN["/admin/login"] -->|admin-credentials| DASH
-  CLIENT_LOGIN["/login"] -->|client-credentials| WELCOME
-  WELCOME --> CLIENTE["/cliente/*"]
-  CLIENTE --> MODS["módulos ambientales"]
-  DASH --> API_ADMIN["/api/forest, /api/users"]
-  CLIENTE --> API_CLIENTE["/api/cliente/*"]
+flowchart LR
+  PUBLIC[Portal público] --> PUBLIC_API[/api/v1/public]
+  VOTER[Portal elector] --> VOTER_API[/api/v1/voter]
+  PARTY[Portal apoderado] --> PARTY_API[/api/v1/party]
+  ADMIN[Comisión electoral] --> ADMIN_API[/api/v1/admin]
+
+  VOTER_API --> ROSTER[(Padrón y participación)]
+  VOTER_API --> URN[(Urna cifrada)]
+  PARTY_API --> DOMAIN[(Elecciones y planchas)]
+  ADMIN_API --> DOMAIN
+  ADMIN_API --> AUDIT[(Auditoría)]
+
+  ROSTER -. sin FK de identidad .- URN
 ```
 
-## Observaciones arquitectónicas
+## Modelo conceptual de identidad
 
-1. "Admin" ≠ solo `/admin`: el backoffice principal está en `(dashboard)/` con URLs planas.
-2. Cliente mayormente público: lectura ambiental no exige login; auth solo para POST sensibles o tarifas persistentes.
-3. Dos tablas de usuario sin relación directa: `User` (RBAC) vs `ClientUser` (sin roles).
-4. Org cliente viene de landing, no de sesión ClientUser.
-5. Next.js 16: guards en `src/proxy.ts`.
-6. Admin configura submodules cliente; cliente solo consume lo activo.
+```text
+organizations
+├── admin_users ── admin_user_roles ── roles/permissions
+├── members ── member_election_status
+├── elections ── positions/slates/candidates
+└── encrypted_ballots   # sin FK a members
+```
 
-## Prompts sugeridos
+Restricciones mínimas:
+- `members`: unicidad de documento normalizado dentro de la organización.
+- `member_election_status`: `UNIQUE(election_id, member_id)`.
+- `encrypted_ballots`: `UNIQUE(election_id, receipt_hash)` y payload inmutable.
+- Ninguna columna de urna puede contener identificadores de miembro, sesión o red.
 
-**Nueva feature admin:**
-> Implementa en `(dashboard)/` con módulo RBAC `{slug}`, protege ruta en `proxy.ts`, usa `requirePermission()` en API, filtra nav en layout.
+## Claims y validación
 
-**Nueva feature cliente:**
-> Implementa en `cliente/{modulo}/`, API en `/api/cliente/{modulo}/` con `requireClientAreaOrganization()`, registra en submodules, dark mode.
+```python
+from dataclasses import dataclass
+from enum import StrEnum
+from uuid import UUID
 
-**Feature dual:**
-> Separa `admin/` vs `cliente/`, comparte lógica en `src/lib/` solamente.
+class Realm(StrEnum):
+    ADMIN = "ADMIN"
+    VOTER = "VOTER"
 
-**Migración:**
-> Extraer ClientUser → route groups → proxy guards → shells → APIs por prefijo.
+@dataclass(frozen=True)
+class Principal:
+    subject_id: UUID
+    realm: Realm
+    organization_id: UUID
+    roles: frozenset[str]
+    permissions: frozenset[str]
+    mfa: bool
+    session_id: UUID
+```
+
+No confiar en `organization_id` enviado en body o query cuando existe principal autenticado. Resolverlo desde el token y contrastarlo con el recurso.
+
+### Dependency FastAPI administrativa
+
+```python
+from fastapi import Depends, HTTPException, status
+
+async def require_admin_permission(
+    permission: str,
+    principal: Principal = Depends(get_current_principal),
+) -> Principal:
+    if principal.realm is not Realm.ADMIN:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
+    if permission not in principal.permissions and "SUPER_ADMIN" not in principal.roles:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
+    return principal
+```
+
+En implementación real, usar una factory de dependencies para recibir `permission`; no aceptar permisos arbitrarios enviados por el cliente.
+
+### Scope de repositorio
+
+```python
+async def get_election_for_update(
+    session: AsyncSession,
+    election_id: UUID,
+    organization_id: UUID,
+) -> Election:
+    stmt = (
+        select(Election)
+        .where(
+            Election.id == election_id,
+            Election.organization_id == organization_id,
+        )
+        .with_for_update()
+    )
+    election = await session.scalar(stmt)
+    if election is None:
+        raise NotFoundError("Election not found")
+    return election
+```
+
+Preferir `404` para recursos fuera del tenant, evitando confirmar su existencia.
+
+## Matriz de permisos sugerida
+
+| Recurso/acción | SUPER_ADMIN | ELECTORAL_JUSTICE | PARTY_PROXY | CANDIDATE | MEMBER |
+|---|---:|---:|---:|---:|---:|
+| Crear elección | Sí | Sí, en su org | No | No | No |
+| Gestionar padrón | Sí | Sí, en su org | No | No | No |
+| Editar plancha | Sí | Revisión | Solo propia y en registro | No | No |
+| Ver perfil candidatura | Sí | Sí | Propia | Propia | Público aprobado |
+| Autorizar emisión | No | No | No | Si actúa como elector | Sí, elegible |
+| Cerrar elección | Sí | Sí, con ceremonia | No | No | No |
+| Aportar share de descifrado | Según ceremonia | Custodio autorizado | No | No | No |
+| Publicar resultados | Sí | Sí, tras validación | No | No | No |
+
+Los roles son una primera condición. También se validan organización, ownership, estado de elección y separación de funciones.
+
+## Estados y operaciones
+
+```text
+DRAFT
+  -> REGISTRATION
+  -> REVIEW
+  -> FROZEN
+  -> ACTIVE
+  -> CLOSED
+  -> TALLYING
+  -> TALLIED
+  -> PUBLISHED
+  -> ARCHIVED
+```
+
+Ejemplos:
+- Planchas editables solo en `REGISTRATION` y, con observación abierta, `REVIEW`.
+- Padrón inmutable desde `FROZEN`.
+- Autorizaciones de emisión solo en `ACTIVE` y dentro de ventana horaria.
+- Descifrado solo desde `CLOSED` con quórum de custodios.
+- Datos públicos de resultados solo en `PUBLISHED`.
+
+## Token de emisión
+
+El token de emisión no es una papeleta y no contiene la selección.
+
+```json
+{
+  "sub": "member-uuid",
+  "org_id": "organization-uuid",
+  "election_id": "election-uuid",
+  "purpose": "CAST_BALLOT",
+  "jti": "random-128-bit",
+  "mfa": true,
+  "exp": 1780000000
+}
+```
+
+Persistir:
+- `sha256(jti)`
+- elección y miembro en el ledger de autorización
+- expiración, estado `ISSUED|CONSUMED|REVOKED`
+
+No persistir:
+- JWT completo
+- payload cifrado junto al ledger
+- `receipt_hash` en la fila del miembro
+
+## Transacción de emisión
+
+```python
+async with session.begin():
+    authorization = await lock_valid_authorization(
+        session=session,
+        token_hash=token_hash,
+        election_id=election_id,
+    )
+    await lock_and_mark_member_as_voted(
+        session=session,
+        member_id=authorization.member_id,
+        election_id=election_id,
+    )
+    await consume_authorization(session, authorization)
+    await insert_anonymous_ballot(
+        session=session,
+        election_id=election_id,
+        encrypted_payload=encrypted_payload,
+        proof=proof,
+        receipt_hash=receipt_hash,
+    )
+```
+
+La operación debe ser atómica para impedir doble voto. Si la política de anonimato exige separación física, usar una cola transaccional/outbox diseñada y auditada; no improvisar dos commits independientes.
+
+## Cookies y CSRF
+
+Usar nombres diferentes, por ejemplo:
+- `ev_admin_session`
+- `ev_voter_session`
+- `ev_csrf`
+
+Reglas:
+- `HttpOnly` en cookies de sesión.
+- `Secure` fuera de desarrollo local.
+- `SameSite=Strict` salvo flujo externo justificado.
+- Path restringido cuando sea viable.
+- Double-submit o token sincronizado para CSRF.
+- Rotación de refresh token y revocación por familia.
+
+## Frontend Next.js
+
+```text
+apps/frontend/src/
+├── app/(public)/
+├── app/(voter)/vote/
+├── app/(party)/party/
+├── app/(admin)/admin/
+├── components/public/
+├── components/voter/
+├── components/party/
+├── components/admin/
+└── lib/api/
+```
+
+Reglas:
+- `proxy.ts` distingue cookies/realms y redirige, pero no decide permisos definitivos.
+- Server components pueden hacer checks de presentación.
+- No guardar access tokens en `localStorage`.
+- `fetch` sensible usa `cache: "no-store"`.
+- Evitar analytics de terceros en `/vote/*` y `/receipt/*`.
+
+## APIs recomendadas
+
+```text
+POST /api/v1/auth/admin/login
+POST /api/v1/auth/voter/request-otp
+POST /api/v1/auth/voter/verify-otp
+POST /api/v1/auth/refresh
+POST /api/v1/auth/logout
+
+GET  /api/v1/public/elections
+GET  /api/v1/public/elections/{id}/slates
+GET  /api/v1/public/receipts/{receipt_hash}
+
+GET  /api/v1/voter/elections/{id}/eligibility
+GET  /api/v1/voter/elections/{id}/ballot
+POST /api/v1/voter/elections/{id}/authorize
+POST /api/v1/voter/elections/{id}/ballots
+
+GET  /api/v1/party/slates/mine
+PATCH /api/v1/party/slates/{id}
+POST /api/v1/party/slates/{id}/submit
+
+GET  /api/v1/admin/elections
+POST /api/v1/admin/elections
+POST /api/v1/admin/elections/{id}/freeze
+POST /api/v1/admin/elections/{id}/close
+POST /api/v1/admin/elections/{id}/tally
+POST /api/v1/admin/elections/{id}/publish
+```
+
+## Auditoría
+
+Registrar:
+- actor seudonimizado o ID administrativo según el evento
+- organización, acción, recurso, resultado, request ID
+- cambios administrativos con before/after sanitizado
+- eventos MFA, bloqueos, freeze, close, tally y publish
+
+No registrar:
+- selección del voto
+- payload descifrado individual
+- OTP o tokens
+- combinación de timestamp exacto de elector y papeleta
+- secretos o shares de descifrado
+
+## Pruebas mínimas
+
+### pytest
+- Realm incorrecto devuelve 403.
+- Recurso de otra organización parece inexistente.
+- Apoderado no edita plancha ajena.
+- Freeze bloquea cambios aunque el rol sea válido.
+- Dos emisiones concurrentes producen exactamente una participación y una papeleta.
+- Fallo de inserción revierte consumo de autorización.
+- La representación de `EncryptedBallot` no contiene identificadores personales.
+
+### Playwright
+- Login admin no autentica portal del elector.
+- Login elector MFA no abre `/admin`.
+- Flujo de emisión muestra confirmación y recibo.
+- Recarga o doble clic no duplica papeleta.
+- Sesión expirada vuelve a autenticación sin conservar selección.
+
+## Checklist de revisión de seguridad
+
+```text
+- [ ] Threat model actualizado
+- [ ] Separación de realms verificada
+- [ ] Tenant scope en cada query sensible
+- [ ] Estado electoral validado en dominio
+- [ ] Urna sin PII ni correladores
+- [ ] Tokens y cookies endurecidos
+- [ ] Rate limits y anti-enumeración
+- [ ] Logs sanitizados
+- [ ] Pruebas de concurrencia y doble voto
+- [ ] Revisión Vera + QA Iris/Nico
+```

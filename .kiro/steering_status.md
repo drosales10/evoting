@@ -73,7 +73,7 @@
   2. **`geovisor-development`** - Desarrollo de geovisores (✅ ACTIVADA)
   3. **`git-workflow`** - Flujo Git colaborativo (✅ ACTIVADA)
   4. **`postgresql-migrations`** - Migraciones seguras (✅ ACTIVADA)
-- **Guía de adaptación:** `ADAPTACION_SKILLS_EVOTING.md` creada
+- **Documentación:** cada skill incluye `reference.md` con contratos y ejemplos específicos de eVoting
 
 ## 🎯 Estado General del Steering: ✅ 100% COMPLETO
 

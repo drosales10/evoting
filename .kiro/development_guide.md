@@ -102,28 +102,26 @@ evoting-platform/
 
 ## 🛠️ **Skills de Kiro Configuradas para eVoting**
 
-### 4 Skills Críticas Activadas:
-1. **`admin-client-split`** ✅ - Separación entre área administrativa (comisión electoral) y área de cliente (votantes)
-2. **`geovisor-development`** ✅ - Visualización geoespacial de participación electoral (necesita adaptación)
-3. **`git-workflow`** ✅ - Flujo Git colaborativo con PR guardrails (aplicable directamente)
-4. **`postgresql-migrations`** ✅ - Migraciones seguras de base de datos electoral
+### 4 Skills críticas adaptadas:
+1. **`admin-client-split`** ✅ - Superficies pública, elector, apoderado y comisión con FastAPI, JWT/MFA y separación identidad-urna.
+2. **`geovisor-development`** ✅ - Jerarquía N0-N4, PostGIS y mapas agregados con supresión de celdas pequeñas.
+3. **`git-workflow`** ✅ - Gates Python/TypeScript/Playwright, CI real y controles para cambios electorales críticos.
+4. **`postgresql-migrations`** ✅ - SQLAlchemy 2, Alembic, PostGIS y estrategia expand/backfill/contract.
 
 ### Características:
-- ✅ **Formato Kiro correcto** con frontmatter YAML
-- ✅ **Activadas automáticamente** cuando son relevantes
-- ✅ **Documentación completa** con guías de referencia
-- 🔄 **Necesitan adaptación** de dominio específico para eVoting
+- ✅ Frontmatter oficial de Kiro (`name`, `description`, `compatibility`, `metadata`).
+- ✅ Nombre de cada skill coincidente con su carpeta.
+- ✅ Descripciones orientadas a activación automática.
+- ✅ Documentación junto a cada skill en `reference.md`.
+- ✅ Contenido específico de eVoting, sin dependencias de SMyEG, NextAuth o Prisma.
 
-### Documentación adicional:
-- `RESUMEN_SKILLS_CONFIGURADAS.md` - Resumen ejecutivo
-- `ADAPTACION_SKILLS_EVOTING.md` - Guía de adaptación específica
 - **TailwindCSS + Shadcn UI**
 - **Web Crypto API** para cifrado en cliente
 
 ### Backend  
-- **FastAPI** (Python 3.11+)
+- **FastAPI** (Python 3.12+)
 - **PostgreSQL 15+** con PostGIS
-- **Prisma Client** (TypeScript)
+- **SQLAlchemy 2 + Alembic**
 - **Pydantic v2** para validación
 
 ### Infraestructura

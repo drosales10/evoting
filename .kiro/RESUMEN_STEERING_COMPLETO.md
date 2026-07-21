@@ -42,7 +42,7 @@ Sistema de votación electrónica institucional con:
 17. **`skills/geovisor-development/`** - Desarrollo de geovisores (✅ ACTIVADA)
 18. **`skills/git-workflow/`** - Flujo Git colaborativo (✅ ACTIVADA)
 19. **`skills/postgresql-migrations/`** - Migraciones seguras (✅ ACTIVADA)
-20. **`skills/ADAPTACION_SKILLS_EVOTING.md`** - Guía de adaptación (NUEVO)
+20. Cada skill incluye documentación detallada en `reference.md` (✅ ADAPTADA A eVOTING)
 
 ## 👥 **EQUIPO DE 15 AGENTES ESPECIALIZADOS**
 

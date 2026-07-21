@@ -1,573 +1,317 @@
-# Referencia: Desarrollo de Geovisores (SMyEG)
+# Referencia eVoting: geografía y participación agregada
 
-Documentación detallada para implementar, extender o dejar operativos los geovisores admin y cliente.
+Usa esta referencia al diseñar tablas PostGIS, contratos GeoJSON, imports o visualizaciones de participación/resultados.
 
-## Diagrama de arquitectura global
+## Arquitectura
 
 ```mermaid
 flowchart TB
-  subgraph Surfaces["Superficies UI"]
-    AG["/admin/geovisor\nLeaflet N1-N3"]
-    DG["/dashboard\nGeoDashboardMap\nLeaflet N1-N4 CRUD"]
-    CG["/cliente/geovisor\nDeckGL+Mapbox\nN1-N4 + GEE"]
-  end
+  ADMIN[Admin Geography] --> ADMIN_API[/api/v1/admin/geography]
+  BOARD[Commission Map] --> BOARD_API[/api/v1/admin/elections/id/participation-map]
+  PUBLIC[Public Map] --> PUBLIC_API[/api/v1/public/elections/id/*-map]
 
-  subgraph APIs["API Layer"]
-    AGEO["/api/admin/geo/*"]
-    FGEO["/api/forest/geo/*"]
-    GEE["/api/gee/*"]
-  end
-
-  subgraph Core["Core Services"]
-    GIW[geo-import-worker.ts]
-    GS[geo-service.ts]
-    EES[ee-server.ts]
-    GSR[geeScriptRegistry]
-  end
-
-  subgraph Infra["Infra"]
-    PG[(PostgreSQL + PostGIS)]
-    EE[Google Earth Engine]
-    GW[geo-worker-scheduler]
-  end
-
-  AG --> AGEO
-  DG --> AGEO & FGEO
-  CG --> GEE
-
-  AGEO --> PG
-  FGEO --> PG
-  GEE --> GS --> PG
-  GEE --> EES --> EE
-  GEE --> GSR --> EE
-
-  AGEO --> GIW
-  FGEO --> GIW
-  GW --> GIW --> PG
+  ADMIN_API --> WORKER[Python import worker]
+  WORKER --> POSTGIS[(PostgreSQL + PostGIS)]
+  BOARD_API --> AGG[Aggregation service] --> POSTGIS
+  PUBLIC_API --> PRIVACY[Publication + suppression policy] --> AGG
 ```
 
-## Jerarquía patrimonial N1–N4
+## Modelo de datos sugerido
 
-| Nivel | Tabla PostGIS | Entidad | Admin geovisor | Cliente | Dashboard |
-|---|---|---|---|---|---|
-| N1 | `forest_geometry_n1` | Organización/ABRAE | Import + ver | Ver + filtrar | Full GIS |
-| N2 | `forest_geometry_n2` | Finca/Predio | Import + ver | Ver + filtrar | Full GIS |
-| N3 | `forest_geometry_n3` | Lote/Compartimiento | Import + ver | Ver + filtrar | Full GIS |
-| N4 | `forest_geometry_n4` | Rodal/Parcela | **No** | Ver + filtrar | CRUD + import |
+Puede usarse una tabla jerárquica o tablas por nivel. Una tabla única simplifica navegación y constraints comunes:
 
-Triggers PostGIS (SQL, no Prisma):
+```python
+class ElectoralArea(Base):
+    __tablename__ = "electoral_areas"
+
+    id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    parent_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("electoral_areas.id"), nullable=True
+    )
+    level: Mapped[str] = mapped_column(String(2), nullable=False)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    geom = mapped_column(Geometry("MULTIPOLYGON", srid=4326), nullable=True)
+    point = mapped_column(Geometry("POINT", srid=4326), nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "level", "code"),
+        CheckConstraint("level IN ('N0','N1','N2','N3','N4')"),
+        Index("ix_electoral_areas_geom", "geom", postgresql_using="gist"),
+        Index("ix_electoral_areas_point", "point", postgresql_using="gist"),
+    )
+```
+
+Relaciones electorales:
+
+```text
+members -> electoral_area_id (área de elegibilidad)
+voting_assignments -> member_id + election_id + voting_table_id
+election_area_snapshots -> election_id + area_id + eligible_count
+election_participation -> election_id + area_id + participation_count
+```
+
+Los snapshots congelan denominadores al cerrar el padrón. No calcular participación histórica contra el padrón actual.
+
+## Constraints y validaciones
+
+- N0 no tiene padre.
+- N1 es hijo de N0; N2 de N1; N3 de N2; N4 de N3.
+- Padre e hijo comparten `organization_id`.
+- N0-N2 requieren `geom`; N3 requiere `point` o `geom`; N4 puede heredar ubicación de N3.
+- Geometrías válidas, no vacías y con SRID 4326.
+- Áreas de una organización no pueden referenciar elecciones de otra.
+
+La validación de parentesco entre filas suele implementarse en servicio o trigger; cubrirla con tests.
+
+## Índices PostGIS
+
 ```sql
-CREATE OR REPLACE FUNCTION public.fn_calculate_forest_metrics()
-RETURNS TRIGGER AS $$
-BEGIN
-  NEW.geom := ST_Multi(ST_MakeValid(NEW.geom));
-  NEW.centroid := ST_PointOnSurface(NEW.geom);
-  NEW.superficie_ha := ST_Area(NEW.geom::geography) / 10000;
-  NEW.updated_at := NOW();
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+CREATE INDEX ix_electoral_areas_geom
+ON electoral_areas USING GIST (geom);
+
+CREATE INDEX ix_electoral_areas_point
+ON electoral_areas USING GIST (point);
+
+CREATE INDEX ix_participation_election_area
+ON election_participation (election_id, area_id);
 ```
 
-## Admin geovisor — detalle
+Para BBOX:
 
-### Estructura de archivos
-
-```
-src/app/admin/geovisor/
-├── page.tsx                    # dynamic ssr:false
-└── components/
-    ├── GeovisorLayout.tsx
-    ├── AdminMapCanvas.tsx      # Leaflet MapContainer
-    ├── LayerPanel.tsx
-    ├── GeoImportPanel.tsx
-    ├── JobStatusTracker.tsx    # poll 3s
-    ├── LevelSelector.tsx
-    ├── AdminToolbar.tsx        # export PNG/GeoJSON
-    └── ImportTemplateDownload.tsx
+```sql
+SELECT id, level, code, name,
+       ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, :tolerance))::json AS geometry
+FROM electoral_areas
+WHERE organization_id = :organization_id
+  AND level = ANY(:levels)
+  AND geom && ST_MakeEnvelope(:west, :south, :east, :north, 4326);
 ```
 
-### Protección
+Parametrizar valores. No interpolar BBOX, IDs ni nombres de nivel en SQL.
 
-- Ruta `/admin/geovisor` en `adminProtectedRoutes` (`src/proxy.ts`)
-- Requiere `userType === "ADMIN"` + RBAC módulo `dashboard`
-- API: permiso `forest-patrimony` READ/CREATE/UPDATE
+## Snapshot de participación
 
-### Carga lazy de capas
+Fórmula base:
 
-```typescript
-// AdminMapCanvas.tsx
-const fetchLayerData = async (level: AdminLevel) => {
-  const layer = useGeovisorStore.getState().adminLayers[level];
-  if (layer.data !== null || layer.loading) return;
-  setAdminLayerLoading(level, true);
-  const res = await fetch(`/api/admin/geo/import/${level}/features`);
-  if (res.ok) setAdminLayerData(level, (await res.json()).data);
-  setAdminLayerLoading(level, false);
-};
+```text
+participation_pct = 100 * participation_count / eligible_count
 ```
 
-- Basemap: OpenStreetMap (no Mapbox)
-- Panes por nivel con z-index según `order`
-- Simbología: `SymbologyPicker` → `localStorage` `smyeg:geovisor:symbology:{orgId}`
+Reglas:
+- `eligible_count` proviene del snapshot congelado de la elección.
+- `participation_count` cuenta estados de participación, no papeletas descifradas.
+- La suma territorial puede diferir si hay miembros sin asignación; reportar categoría `UNASSIGNED` internamente.
+- La urna no se une con miembros para construir el mapa.
 
-### API admin geo
+Consulta conceptual:
 
-| Ruta | Métodos | Descripción |
-|---|---|---|
-| `/api/admin/geo/import/[level]` | GET, POST | Plantilla + upload ZIP |
-| `/api/admin/geo/import/[level]/features` | GET, PATCH | GeoJSON + media |
-| `/api/admin/geo/import/[level]/jobs` | GET | Listado jobs |
-| `/api/admin/geo/import/[level]/jobs/[jobId]` | GET | Detalle job |
-
-Levels: `n1`, `n2`, `n3` solamente.
-
-### Import workflow
-
-1. Usuario sube ZIP (.shp/.shx/.dbf/.prj)
-2. `POST /api/admin/geo/import/{level}` crea job
-3. Sin `GEO_WORKER_SECRET`: procesamiento inline
-4. Con secret: job `PENDING` → `geo-worker-scheduler` consume
-5. `JobStatusTracker` polling → al completar invalida cache capa
-
-## Dashboard GIS (GeoDashboardMap)
-
-- Componente grande (~6200 líneas) en `src/components/GeoDashboardMap*.tsx`
-- Leaflet + `/api/forest/geo/*`
-- CRUD N4, split/merge, import masivo, edición draw
-- **No integra GEE** — separado del cliente
-- Usar para operaciones geométricas; no duplicar en admin geovisor simplificado
-
-### API forest geo (dashboard)
-
-| Ruta | Descripción |
-|---|---|
-| `/api/forest/geo/import` | Import masivo N4 |
-| `/api/forest/geo/level4` | CRUD N4 desde mapa |
-| `/api/forest/geo/layers/nivel4` | Features N4 por bbox |
-| `/api/forest/geo/operations` | Split/merge rodales |
-
-## Cliente geovisor — detalle
-
-### Estructura de archivos
-
-```
-src/app/cliente/geovisor/
-├── page.tsx                    # MapView + SidebarStats, ssr:false
-└── components/
-    ├── MapView.tsx             # DeckGL orquestador
-    ├── SidebarStats.tsx        # 5 tabs
-    ├── ScriptRunner.tsx        # GEE scripts
-    ├── LayerControl.tsx
-    ├── FeatureInspector.tsx
-    ├── MapLegend.tsx
-    └── storage.ts              # legacy helper
+```sql
+SELECT s.area_id,
+       s.eligible_count,
+       COALESCE(p.participation_count, 0) AS participation_count,
+       CASE WHEN s.eligible_count = 0 THEN 0
+            ELSE ROUND(100.0 * COALESCE(p.participation_count, 0) / s.eligible_count, 2)
+       END AS participation_pct
+FROM election_area_snapshots s
+LEFT JOIN election_participation p
+  ON p.election_id = s.election_id
+ AND p.area_id = s.area_id
+WHERE s.election_id = :election_id;
 ```
 
-### Dependencias mapa cliente
+## Política de publicación y supresión
 
-```json
-"deck.gl": "^9.3.1",
-"@deck.gl/layers": "^9.3.1",
-"@deck.gl/geo-layers": "^9.3.1",
-"@deck.gl/react": "^9.3.1",
-"mapbox-gl": "^3.22.0",
-"react-map-gl": "^8.1.1",
-"@google/earthengine": "^1.7.25",
-"@turf/turf": "^7.3.4"
-```
-
-### MapView — capas DeckGL
-
-```typescript
-// Orden de render (de abajo a arriba)
-const layers = [
-  // 1. Raster base GEE (si no hay script activo)
-  new TileLayer({ id: 'gee-base-raster', data: tileUrl, ... }),
-  // 2. Raster dinámico script
-  dynamicGeeRasterUrl && new TileLayer({ id: 'gee-script-raster', ... }),
-  // 3. Contorno AOI script
-  dynamicGeeRasterAOI && new GeoJsonLayer({ id: 'gee-aoi-outline', ... }),
-  // 4. Vector patrimonial
-  new GeoJsonLayer({ id: 'patrimonial-vector', data: filteredFeatures, ... }),
-  // 5. Halo selección
-  selectedFeature && new GeoJsonLayer({ id: 'selection-halo', ... }),
-];
-```
-
-### Basemap Mapbox
-
-```typescript
-const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
-const FALLBACK_MAP_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
-
-// Sin token → CARTO + toast warning
-// Con token → estilos Mapbox (satellite, dark, streets, etc.)
-```
-
-Basemaps disponibles: dark-v11, streets-v12, light-v11, outdoors-v12, satellite-v9, navigation-day/night.
-
-### Colores por nivel (cliente)
-
-```typescript
-const DEFAULT_LEVEL_COLORS = {
-  N1: [16, 185, 129, 100],   // verde
-  N2: [59, 130, 246, 100],   // azul
-  N3: [245, 158, 11, 100],  // ámbar
-  N4: [168, 85, 247, 100],  // púrpura (configurable symbology)
-};
-```
-
-## Google Earth Engine — guía completa
-
-### Credenciales
+Configurar por organización/elección:
 
 ```env
-EE_CLIENT_EMAIL=service-account@project.iam.gserviceaccount.com
-EE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+PUBLIC_MAP_MIN_GROUP_SIZE=20
+PUBLIC_MAP_TIME_BUCKET_MINUTES=60
+PUBLIC_MAP_MAX_LEVEL=N2
 ```
 
-Health check: `GET /api/gee/status`
+Son valores operativos, no universales. Deben revisarse conforme a normativa y threat model.
 
-### Flujo ScriptRunner → MapView
+Algoritmo recomendado:
 
-```mermaid
-sequenceDiagram
-  participant SR as ScriptRunner
-  participant API as POST /api/gee/run-script
-  participant REG as geeScriptRegistry
-  participant EE as Earth Engine
-  participant Store as useGeovisorStore
-  participant MV as MapView
-
-  SR->>SR: getEffectiveAOI()
-  SR->>API: { scriptId, aoi, params }
-  API->>REG: getGEEJobById(scriptId)
-  REG->>EE: script.run(aoi, params)
-  EE-->>API: { urlFormat, metrics, chart, table }
-  API-->>SR: result
-  SR->>SR: toProxyTileTemplate(urlFormat)
-  SR->>Store: setDynamicGeeRasterResult(proxyUrl, aoiType)
-  Store->>MV: re-render TileLayer script
+```python
+def public_metric(row: ParticipationRow, policy: MapPrivacyPolicy) -> dict:
+    should_suppress = (
+        row.eligible_count < policy.min_group_size
+        or row.participation_count < policy.min_participation_count
+        or level_rank(row.level) > level_rank(policy.max_public_level)
+    )
+    if should_suppress:
+        return {
+            "suppressed": True,
+            "eligibleCount": None,
+            "participationCount": None,
+            "participationPct": None,
+        }
+    return serialize_public_row(row)
 ```
 
-### Plantilla para nuevo script GEE
+Evitar que el total padre menos hijos visibles revele una celda suprimida. Aplicar supresión complementaria o no publicar desgloses incompatibles.
+
+## Estados electorales
+
+| Estado | Comisión | Público |
+|---|---|---|
+| DRAFT/REGISTRATION/FROZEN | Datos de configuración | Sin métricas |
+| ACTIVE | Participación agregada según permiso | Solo participación si política lo permite |
+| CLOSED/TALLYING | Participación final | Participación final, sin resultados |
+| TALLIED | Resultados internos | Sin resultados hasta aprobación |
+| PUBLISHED | Resultados agregados | Resultados publicados y suprimidos |
+
+Nunca incluir selección individual ni dataset que permita reconstruirla.
+
+## Contratos Pydantic separados
+
+```python
+class AdminAreaMetric(BaseModel):
+    id: UUID
+    level: Literal["N0", "N1", "N2", "N3", "N4"]
+    eligible_count: int
+    participation_count: int
+    participation_pct: Decimal
+    updated_at: datetime
+
+class PublicAreaMetric(BaseModel):
+    id: UUID
+    level: Literal["N0", "N1", "N2", "N3", "N4"]
+    suppressed: bool
+    participation_pct: Decimal | None
+    updated_bucket: datetime | None
+```
+
+No construir `PublicAreaMetric` serializando primero el DTO administrativo.
+
+## Endpoints
+
+### Administración geográfica
+
+```text
+POST /api/v1/admin/geography/imports
+GET  /api/v1/admin/geography/imports/{job_id}
+GET  /api/v1/admin/geography/areas?levels=N1,N2&bbox=...
+PATCH /api/v1/admin/geography/areas/{area_id}
+POST /api/v1/admin/geography/validate
+```
+
+### Mapas electorales
+
+```text
+GET /api/v1/admin/elections/{election_id}/participation-map
+GET /api/v1/public/elections/{election_id}/participation-map
+GET /api/v1/public/elections/{election_id}/results-map
+GET /api/v1/public/elections/{election_id}/map-stream
+```
+
+El stream público solo emite agregados ya suprimidos.
+
+## Worker de importación
+
+```text
+UPLOADED -> VALIDATING -> PROCESSING -> COMPLETED
+                 \-> FAILED
+```
+
+Validaciones:
+1. ZIP sin path traversal ni archivos ejecutables.
+2. Componentes shapefile requeridos y tamaño máximo.
+3. CRS presente y transformable.
+4. Geometrías válidas tras reparación controlada.
+5. Códigos únicos dentro de org/nivel.
+6. Padres existentes o incluidos en lote.
+7. Conteos de creados, actualizados, rechazados.
+8. Publicación transaccional.
+
+No conservar indefinidamente archivos originales con datos sensibles. Aplicar política de retención.
+
+## Frontend
+
+### Store mínimo
 
 ```typescript
-// src/gee-scripts/ndviTrend.ts
-import ee from '@google/earthengine';
-import type { GEEJob, AOI, GEEJobResult } from './dynamicWorldLulc';
-
-export const runNdviTrend: GEEJob = async (aoi, params = {}) => {
-  const eeGeometryFactory = ee as unknown as { Geometry: (g: object) => unknown };
-  const region = (eeGeometryFactory.Geometry(aoi.geometry) as { simplify: (n: number) => unknown })
-    .simplify(100);
-
-  const startDate = (params.startDate as string) ?? '2020-01-01';
-  const endDate = (params.endDate as string) ?? new Date().toISOString().slice(0, 10);
-
-  const collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-    .filterDate(startDate, endDate)
-    .filterBounds(region)
-    .map((img: unknown) => {
-      // calcular NDVI por imagen
-      return img;
-    });
-
-  const median = collection.median().clip(region);
-
-  const visParams = { min: -0.2, max: 0.8, palette: ['red', 'yellow', 'green'] };
-
-  const mapInfo = await new Promise<{ urlFormat: string }>((resolve, reject) => {
-    (median as { getMap: (v: unknown, cb: (r: { urlFormat: string }, e: unknown) => void) => void })
-      .getMap(visParams, (res, err) => err ? reject(err) : resolve(res));
-  });
-
-  return {
-    urlFormat: mapInfo.urlFormat,
-    metrics: { script: 'ndviTrend', aoiType: aoi.type, startDate, endDate },
-    // chart/table opcionales para panel lateral
-  };
+type ElectionGeoState = {
+  featureCollection: GeoJSON.FeatureCollection | null;
+  visibleLevels: Array<'N0' | 'N1' | 'N2' | 'N3' | 'N4'>;
+  metric: 'participation' | 'results';
+  selectedFeatureId: string | null;
+  datasetVersion: string | null;
 };
 ```
 
-Registrar:
-```typescript
-// geeScriptRegistry.ts
-import { runNdviTrend } from './ndviTrend';
+No guardar en localStorage métricas sensibles ni tokens. Se puede persistir basemap, zoom y niveles visibles.
 
-export const geeScriptRegistry = [
-  // ... existentes
-  {
-    id: 'ndviTrend',
-    name: 'NDVI (Sentinel-2)',
-    description: 'Índice de vegetación mediano en el periodo seleccionado.',
-    run: runNdviTrend,
-  },
+### Capas DeckGL
+
+```typescript
+const layers = [
+  new GeoJsonLayer({ id: 'electoral-areas', data: featureCollection }),
+  new ScatterplotLayer({ id: 'voting-centers', data: centers }),
+  selectedFeature && new GeoJsonLayer({ id: 'selection', data: selectedFeature }),
 ];
 ```
 
-### Parámetros UI en ScriptRunner
+- Color accesible y no ambiguo.
+- Leyenda indica periodo, versión, supresión y denominador.
+- Tooltip no muestra conteos suprimidos.
+- Tabla alternativa accesible para teclado/lector de pantalla.
 
-Para scripts con params custom, extender ScriptRunner:
-- Detectar `scriptId` y mostrar inputs (fechas, año, bandas)
-- Pasar en body: `{ scriptId, aoi, params: { startDate, endDate, year } }`
-- `dynamicWorldLulc` ya soporta `startDate`, `endDate`, `year`
+## Rendimiento
 
-### Proxy tiles — seguridad
+- BBOX y niveles por zoom.
+- `ST_SimplifyPreserveTopology` según escala.
+- ETag o `datasetVersion` para snapshots.
+- Cache pública solo para datos ya publicables.
+- Cache administrativa privada y corta.
+- Clustering para N3/N4.
+- Considerar vector tiles cuando GeoJSON exceda el presupuesto acordado.
 
-```typescript
-// /api/gee/run-script/tiles/route.ts
-const ALLOWED_PREFIX = '/v1/projects/earthengine-legacy/maps/';
-// Solo paths que empiecen con ALLOWED_PREFIX y contengan /tiles/
-// Fetch a https://earthengine.googleapis.com{tilePath}
-// Cache-Control: private, max-age=60
-```
+## Seguridad
 
-### Raster base vs script — unificar proxy
+- Validar límites BBOX y número de features.
+- Rate limiting en exports y mapas públicos.
+- `Content-Disposition` seguro en descargas.
+- No usar URLs firmadas de larga vida para imports.
+- Sanitizar propiedades usadas en tooltips.
+- CSP compatible con proveedor de basemap.
+- Tokens Mapbox públicos restringidos por dominio y alcance.
 
-**Gap actual:** tiles base (`/api/gee/tiles`) devuelven URL externa consumida directamente por DeckGL. Scripts usan proxy.
+## Testing
 
-**Mejora recomendada:**
-```typescript
-// Opción A: proxy en API tiles
-return NextResponse.json({
-  urlFormat: `/api/gee/run-script/tiles?path=${encodeURIComponent(mapPath)}&z={z}&x={x}&y={y}`
-});
+### pytest
+- Parentesco N0-N4 correcto e incorrecto.
+- Tenant isolation en BBOX y exports.
+- `ST_MakeValid` y transformación de CRS.
+- Suppression policy y supresión complementaria.
+- Estados electorales bloquean resultados prematuros.
+- Snapshot usa padrón congelado.
+- Endpoint público nunca incluye campos administrativos.
 
-// Opción B: endpoint dedicado /api/gee/tiles/proxy/{z}/{x}/{y}
-```
+### Playwright
+- Navegación, zoom, filtros y leyenda.
+- Tooltip de celda suprimida no revela conteos.
+- Tabla accesible coincide con mapa.
+- Stream reconecta y recupera snapshot.
+- Usuario público no puede abrir capas N4 restringidas.
 
-### Caché de scripts (mejora)
+## Checklist deploy
 
-```typescript
-// Pseudocódigo server-side
-const cacheKey = crypto.createHash('sha256')
-  .update(`${scriptId}:${JSON.stringify(aoi)}:${JSON.stringify(params)}`)
-  .digest('hex');
-
-const cached = await redis.get(`gee:script:${cacheKey}`);
-if (cached) return JSON.parse(cached);
-
-const result = await script.run(aoi, params);
-await redis.setex(`gee:script:${cacheKey}`, 3600, JSON.stringify(result));
-return result;
-```
-
-### Carbono — extender a AOI agregados
-
-Hoy: solo N4 via `calculateCarbonStockAction(areaId)`.
-
-Mejora:
-```typescript
-// Nueva action o extensión
-export async function calculateCarbonStockForAOI(aoi: AOI) {
-  // Usar aoi.geometry directamente sin query N4
-  // Invocar desde SidebarStats cuando AOI = N1/N2/N3/full
-}
-```
-
-## geo-service.ts — vector cliente
-
-```typescript
-export async function getGeoJsonForLandingOrganization(organizationId: string) {
-  const [n1Rows, n2Rows, n3Rows, n4Rows] = await Promise.all([
-    // queries PostGIS con ST_AsGeoJSON(ST_Simplify(geom, 0.001))
-    // is_active = TRUE, organization_id = orgId
-  ]);
-  return {
-    type: 'FeatureCollection',
-    features: [...n1Features, ...n2Features, ...n3Features, ...n4Features],
-  };
-}
-```
-
-Cada feature:
-```typescript
-properties: {
-  level: 'N1' | 'N2' | 'N3' | 'N4',  // MAYÚSCULAS — crítico para store
-  superficieHa: number,
-  code, name, type, // según nivel
-}
-```
-
-## useGeovisorStore — derivación AOI
-
-```typescript
-setVectorData: (data) => {
-  // Filtra features por properties.level
-  // Calcula n1Geometry, n2Geometry, n3Geometry, n4Geometry (union/bbox)
-  // Calcula fullExtent (bbox de toda la colección)
-  // Usado por ScriptRunner para AOI agregada
-}
-```
-
-Estado GEE dinámico:
-```typescript
-dynamicGeeRasterUrl: string | null;
-dynamicGeeRasterAOI: GeeScriptAOIType | null;
-setDynamicGeeRasterResult: (url, aoiType) => void;
-clearDynamicGeeRasterResult: () => void;
-```
-
-## SidebarStats — tabs
-
-| Tab | Componente | Función |
-|---|---|---|
-| Buscar | búsqueda texto | Filtra features por nombre/código |
-| Filtros | nivel + visibilidad | `visiblePatrimonialLevels`, `activeLevel` |
-| GIS | LayerControl | Toggle capas vector/raster |
-| Inspector | FeatureInspector | Props del feature seleccionado |
-| GEE | ScriptRunner | Ejecutar scripts + ver métricas/gráficos |
-
-Persistencia tab/filtros: `geovisor-client-sidebar-storage.ts`.
-
-## Workers geo — detalle
-
-**Scheduler:** `src/workers/geo-worker-scheduler.ts`
-
-| Función | Job | Tabla |
-|---|---|---|
-| `processNextN1ImportJob` | Import N1 | `GeoImportJobN1` |
-| `processNextN2ImportJob` | Import N2 | `GeoImportJobN2` |
-| `processNextN3ImportJob` | Import N3 | `GeoImportJobN3` |
-| `processNextPendingImportJob` | Import N4 legacy | `GeoImportJob` |
-| `processNextRecalcJob` | Recalc superficies | `forest_geometry_recalc_jobs` |
-| `processNextGeoVariationJob` | Variaciones | `GeoLandVariationJob` |
-
-**PM2:** `ecosystem.config.cjs` → `confor-geo-worker`
-
-Env vars:
-```
-GEO_WORKER_INTERVAL_MS=4000
-GEO_N1_IMPORT_BATCH_SIZE=...
-GEO_N2_IMPORT_BATCH_SIZE=...
-GEO_N3_IMPORT_BATCH_SIZE=...
-GEO_IMPORT_BATCH_SIZE=...        # N4
-GEO_RECALC_BATCH_SIZE=...
-GEO_VARIATION_BATCH_SIZE=...
-GEO_WORKER_RUN_ONCE=true         # diagnóstico
-GEO_WORKER_SECRET=...            # delegar import HTTP
-```
-
-## Simbología compartida
-
-- Admin N1–N3: `initializeAdminLayers(orgId)` lee/escribe `smyeg:geovisor:symbology:{orgId}`
-- Cliente N4: `loadN4Symbology()` lee misma clave, campo `.n4`
-- Componente: `SymbologyPicker` (`src/components/SymbologyPicker.tsx`)
-- **Gap:** `MapLegend` no persiste cambios N4 al modificar — solo lee al cargar
-
-Fix recomendado:
-```typescript
-// MapLegend onChange
-const { organizationId } = resolveClientGeovisorStorageScope();
-const key = buildClientGeovisorSymbologyStorageKey({ organizationId });
-const existing = JSON.parse(localStorage.getItem(key) ?? '{}');
-localStorage.setItem(key, JSON.stringify({ ...existing, n4: newSymbology }));
-```
-
-## Dark mode (cliente)
-
-- `ClientExperienceShell` hereda tema root
-- Clases `dark:` en panel geovisor, ScriptRunner, sidebar
-- Mapbox: estilos `dark-v11`, `navigation-night-v1`
-- DeckGL: colores RGBA con alpha para polígonos sobre basemap oscuro
-
-## Mobile (sataa-mobile)
-
-```
-apps/sataa-mobile/src/components/GeovisorMap.tsx
-apps/sataa-mobile/src/services/geovisor-cache.ts
-```
-
-Reutiliza `NEXT_PUBLIC_MAPBOX_TOKEN` / `EXPO_PUBLIC_MAPBOX_TOKEN`.
-
-## Plan de implementación (fases)
-
-Referencia: `internal-docs/agents/17-plan-implementacion-geovisor-cliente-deckgl.md`
-
-| Fase | Contenido | Estado |
-|---|---|---|
-| 1 | Shell cliente + ssr:false | ✓ |
-| 2 | DeckGL + Mapbox | ✓ |
-| 3 | Sidebar funcional | ✓ |
-| 4 | Store + persistencia | ✓ |
-| 5 | GEE vector + raster + scripts | ✓ |
-| 6 | Endurecimiento (proxy base, caché, tests) | Parcial |
-
-## Scripts GEE sugeridos para registry
-
-| ID | Dataset GEE | Uso |
-|---|---|---|
-| `dynamicWorldLulc` | GOOGLE/DYNAMICWORLD/V1 | ✓ Implementado |
-| `ndviTrend` | COPERNICUS/S2_SR_HARMONIZED | Vegetación temporal |
-| `forestLoss` | UMD/hansen/global_forest_change_2023_v1 | Pérdida bosque |
-| `elevation` | USGS/SRTMGL1_003 | Topografía |
-| `precipitation` | NASA/GPM_L3/IMERGR_V07 | Hidrología cliente |
-| `fireRisk` | FIRMS o MODIS | Alertas SATAA |
-
-Cada uno: mismo contrato `GEEJob`, clip AOI, getMap, reduceRegion opcional.
-
-## Checklist deploy producción
-
-```
-Infra:
-- [ ] PostgreSQL 15 + PostGIS (no postgres:15-alpine sin PostGIS)
-- [ ] EE service account con Earth Engine activado
-- [ ] NEXT_PUBLIC_MAPBOX_TOKEN en env
-- [ ] GEO_WORKER_SECRET + PM2 geo-worker
-
-Datos:
-- [ ] Migraciones aplicadas (pnpm db:migrate:safe)
-- [ ] Geometrías importadas para org landing activa
-- [ ] Seed/config: activeLandingOrganizationId en system config
-
-Validación:
-- [ ] GET /api/gee/status → 200
-- [ ] GET /api/gee/vector → FeatureCollection con N1-N4
-- [ ] GET /api/gee/tiles → urlFormat válido
-- [ ] POST /api/gee/run-script → raster visible en mapa
-- [ ] Proxy tiles carga sin CORS errors
-- [ ] Admin import N1-N3 completa job
-- [ ] pnpm qa:module verde
-```
-
-## Prompts para agentes
-
-**Añadir script GEE NDVI:**
-> Crear `src/gee-scripts/ndviTrend.ts` con GEEJob, clip AOI, getMap, registrar en registry, verificar ScriptRunner + proxy tiles + dark mode panel resultados.
-
-**Capa vectorial nueva en MapView:**
-> Filtrar en store por level, GeoJsonLayer con getFillColor/getLineColor, toggle en LayerControl, persistir visibilidad en geovisor-client-storage.
-
-**Fix raster base sin proxy:**
-> Modificar `/api/gee/tiles` para devolver URL proxy local, actualizar MapView TileLayer data template.
-
-**Import shapefile admin:**
-> GeoImportPanel → validar ZIP → POST admin API → JobStatusTracker → test worker:geo:once.
-
-**Carbono AOI N3:**
-> Extender carbon-analysis.ts para aceptar geometría agregada del store, botón en SidebarStats cuando activeLevel=N3.
-
-## Mapa de archivos
-
-```
-src/app/admin/geovisor/
-src/app/cliente/geovisor/
-src/components/GeoDashboardMap.tsx
-src/components/SymbologyPicker.tsx
-src/store/useGeovisorStore.ts
-src/gee-scripts/
-src/lib/ee-server.ts
-src/lib/geo-service.ts
-src/lib/geovisor-client-*.ts
-src/app/api/gee/
-src/app/api/admin/geo/
-src/app/api/forest/geo/
-src/workers/geo-worker-scheduler.ts
-src/lib/geo-import-worker.ts
-src/actions/carbon-analysis.ts
-internal-docs/agents/17-plan-implementacion-geovisor-cliente-deckgl.md
-ecosystem.config.cjs
-docker-compose.yml
+```text
+- [ ] PostGIS habilitado
+- [ ] Índices GiST creados
+- [ ] Snapshots de elegibilidad generados
+- [ ] Política pública configurada
+- [ ] Worker y storage privado disponibles
+- [ ] Basemap token restringido
+- [ ] API admin no cacheable públicamente
+- [ ] API pública aplica supresión
+- [ ] Mapa no muestra resultados antes de PUBLISHED
+- [ ] Tests espaciales y de privacidad en verde
 ```
