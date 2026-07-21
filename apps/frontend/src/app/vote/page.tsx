@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function VotePage() {
   return (
     <div className="page-shell narrow-shell">
@@ -7,6 +9,9 @@ export default function VotePage() {
       <div className="notice">
         <strong>Próximo paso</strong>
         <p>Configurar request-otp, verify-otp y el token de emisión de un solo uso.</p>
+        <Link className="button button-primary inline-button" href="/vote/login">
+          Acceder como elector
+        </Link>
       </div>
     </div>
   );

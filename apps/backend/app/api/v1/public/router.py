@@ -4,11 +4,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
+from app.repositories.elections import PublicElectionRepository
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -29,27 +29,20 @@ async def list_public_elections(
     response: Response,
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> list[PublicElection]:
-    """Return only elections that are safe for the public portal.
+    """Return only elections approved for public publication.
 
-    This endpoint is intentionally read-only. It assumes the existing database has the
-    conceptual `elections` table described by the project specification; no DDL is run.
+    This endpoint is intentionally read-only. It returns a controlled projection and never
+    exposes roster, participation or ballot data.
     """
     response.headers["Cache-Control"] = "no-store"
-    query = text(
-        """
-        SELECT id, title, voting_type, start_time, end_time, status
-        FROM elections
-        WHERE status IN ('REGISTRATION', 'FREEZE', 'ACTIVE', 'CLOSED', 'TALLIED')
-        ORDER BY start_time ASC
-        """
-    )
+    repository = PublicElectionRepository()
 
     try:
-        result = await session.execute(query)
+        elections = await repository.fetch_published(session)
     except SQLAlchemyError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Public election data is temporarily unavailable",
         ) from exc
 
-    return [PublicElection.model_validate(row) for row in result.mappings().all()]
+    return [PublicElection.model_validate(election) for election in elections]

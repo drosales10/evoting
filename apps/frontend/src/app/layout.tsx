@@ -17,10 +17,8 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
           <Link className="brand" href="/">
             e<span>Voting</span>
           </Link>
-          <nav aria-label="Navegación principal">
+          <nav aria-label="Navegación pública">
             <Link href="/elections">Elecciones</Link>
-            <Link href="/vote">Votar</Link>
-            <Link href="/admin">Comisión</Link>
           </nav>
         </header>
         <main>{children}</main>

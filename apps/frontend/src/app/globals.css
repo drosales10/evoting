@@ -68,3 +68,14 @@ p { color: var(--muted); line-height: 1.65; margin: 0; }
   .election-item { align-items: flex-start; flex-direction: column; }
   .election-item time { white-space: normal; }
 }
+
+.auth-card { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; max-width: 620px; padding: 34px; }
+.voter-auth-card { border-top: 4px solid var(--primary); }
+.auth-form { display: grid; gap: 10px; margin-top: 30px; }
+.auth-form label { font-size: 0.86rem; font-weight: 800; margin-top: 8px; }
+.auth-form input { border: 1px solid var(--line); border-radius: 10px; color: var(--ink); font: inherit; padding: 13px 14px; }
+.auth-form input:focus { border-color: var(--primary); outline: 3px solid var(--accent); }
+.form-help { font-size: 0.86rem; margin: 8px 0; }
+.form-message { background: #edf4ff; border-radius: 10px; color: var(--primary-dark); font-size: 0.9rem; padding: 12px; }
+.inline-button { border: 0; cursor: pointer; display: inline-block; margin-top: 18px; }
+.back-link { color: var(--primary); display: inline-block; font-size: 0.9rem; font-weight: 700; margin-top: 24px; }
