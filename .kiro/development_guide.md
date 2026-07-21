@@ -99,6 +99,24 @@ evoting-platform/
 ### Frontend
 - **Next.js 15+** con App Router
 - **TypeScript 5+** strict mode
+
+## 🛠️ **Skills de Kiro Configuradas para eVoting**
+
+### 4 Skills Críticas Activadas:
+1. **`admin-client-split`** ✅ - Separación entre área administrativa (comisión electoral) y área de cliente (votantes)
+2. **`geovisor-development`** ✅ - Visualización geoespacial de participación electoral (necesita adaptación)
+3. **`git-workflow`** ✅ - Flujo Git colaborativo con PR guardrails (aplicable directamente)
+4. **`postgresql-migrations`** ✅ - Migraciones seguras de base de datos electoral
+
+### Características:
+- ✅ **Formato Kiro correcto** con frontmatter YAML
+- ✅ **Activadas automáticamente** cuando son relevantes
+- ✅ **Documentación completa** con guías de referencia
+- 🔄 **Necesitan adaptación** de dominio específico para eVoting
+
+### Documentación adicional:
+- `RESUMEN_SKILLS_CONFIGURADAS.md` - Resumen ejecutivo
+- `ADAPTACION_SKILLS_EVOTING.md` - Guía de adaptación específica
 - **TailwindCSS + Shadcn UI**
 - **Web Crypto API** para cifrado en cliente
 

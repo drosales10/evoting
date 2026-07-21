@@ -66,9 +66,14 @@
 - **Contenido:** Resumen de todo el steering, estado 100% completo
 - **Estado:** ✅ 100% completo
 
-### 8. **Skills Directory** ⚠️ **OPCIONAL**
-- **Estado:** Vacío pero no crítico
-- **Nota:** Las skills de Kiro son opcionales y pueden añadirse según necesidad durante el desarrollo
+### 8. **Skills Directory** ✅ **COMPLETADO Y CONFIGURADO**
+- **Estado:** ✅ 4 skills críticas configuradas y activadas
+- **Skills disponibles:**
+  1. **`admin-client-split`** - Separación admin/cliente (✅ ACTIVADA)
+  2. **`geovisor-development`** - Desarrollo de geovisores (✅ ACTIVADA)
+  3. **`git-workflow`** - Flujo Git colaborativo (✅ ACTIVADA)
+  4. **`postgresql-migrations`** - Migraciones seguras (✅ ACTIVADA)
+- **Guía de adaptación:** `ADAPTACION_SKILLS_EVOTING.md` creada
 
 ## 🎯 Estado General del Steering: ✅ 100% COMPLETO
 

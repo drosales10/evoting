@@ -37,6 +37,13 @@ Sistema de votación electrónica institucional con:
 14. **`rules/routing.md`** - Tablas de routing y ownership
 15. **`rules/agents/`** - Chartes individuales de cada agente
 
+### 🛠️ **Skills de Kiro Configuradas (✅ EXISTENTE)**
+16. **`skills/admin-client-split/`** - Separación admin/cliente (✅ ACTIVADA)
+17. **`skills/geovisor-development/`** - Desarrollo de geovisores (✅ ACTIVADA)
+18. **`skills/git-workflow/`** - Flujo Git colaborativo (✅ ACTIVADA)
+19. **`skills/postgresql-migrations/`** - Migraciones seguras (✅ ACTIVADA)
+20. **`skills/ADAPTACION_SKILLS_EVOTING.md`** - Guía de adaptación (NUEVO)
+
 ## 👥 **EQUIPO DE 15 AGENTES ESPECIALIZADOS**
 
 ### **Liderazgo y Coordinación**
