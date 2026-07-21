@@ -1,0 +1,6 @@
+alembic==1.14.1
+asyncpg==0.30.0
+fastapi==0.115.6
+pydantic-settings==2.7.1
+sqlalchemy[asyncio]==2.0.37
+uvicorn[standard]==0.34.0

@@ -1,0 +1,15 @@
+{
+  "name": "evoting-platform",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.4.1",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev:frontend": "pnpm --filter @evoting/frontend dev",
+    "build:frontend": "pnpm --filter @evoting/frontend build",
+    "lint:frontend": "pnpm --filter @evoting/frontend lint",
+    "typecheck:frontend": "pnpm --filter @evoting/frontend typecheck"
+  }
+}

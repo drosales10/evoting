@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+**/node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -11,14 +11,15 @@
 !.yarn/versions
 
 # testing
-/coverage
+**/coverage/
 
 # next.js
-/.next/
-/out/
+**/.next/
+**/out/
 
 # production
-/build
+**/build/
+**/dist/
 
 # misc
 .DS_Store
@@ -69,7 +70,23 @@ autolink-*.txt
 .squad/sessions/
 # Squad: SubSquad activation file (local to this machine)
 .squad-workstream
-.env.example
+
+# Python
+**/__pycache__/
+*.py[cod]
+**/.venv/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/*.egg-info/
+
+# Tooling caches and coverage
+**/.cache/
+**/.turbo/
+.coverage
+.coverage.*
+htmlcov/
+
 /openspec
 .openspec
 /kiro
