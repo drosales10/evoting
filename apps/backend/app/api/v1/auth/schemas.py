@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -5,6 +7,25 @@ class AdminLoginRequest(BaseModel):
     organization_slug: str = Field(min_length=2, max_length=100)
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=12, max_length=256)
+
+
+class AdminMfaEnrollRequest(AdminLoginRequest):
+    pass
+
+
+class AdminMfaVerifyRequest(AdminLoginRequest):
+    code: str = Field(pattern=r"^\d{6}$")
+
+
+class AdminMfaEnrollmentResponse(BaseModel):
+    status: Literal["ENROLLED"]
+    secret: str
+    otpauth_uri: str
+
+
+class AdminLoginResponse(BaseModel):
+    status: Literal["AUTHENTICATED", "MFA_REQUIRED"]
+    mfa_required: bool
 
 
 class VoterOtpRequest(BaseModel):

@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     access_token_minutes: int = 10
     refresh_token_days: int = 7
     secure_cookies: bool = False
+    admin_mfa_required: bool = True
+    mfa_encryption_key: str | None = None
+    seed_admin_email: str | None = None
+    seed_admin_password: str | None = None
+    seed_admin_name: str | None = None
+    seed_admin_org_slug: str | None = None
+    seed_admin_org_name: str | None = None
+    seed_admin_role: str = "ELECTORAL_JUSTICE"
 
     model_config = SettingsConfigDict(
         env_file=(WORKSPACE_ROOT / ".env", WORKSPACE_ROOT / "apps/backend/.env"),

@@ -139,7 +139,7 @@ class Candidate(CreatedAtMixin, Base):
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     slate_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
-        ForeignKey("slates.id"),
+        ForeignKey("slates.id", ondelete="CASCADE"),
         nullable=False,
     )
     position_id: Mapped[UUID] = mapped_column(

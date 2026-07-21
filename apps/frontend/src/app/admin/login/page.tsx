@@ -15,8 +15,8 @@ export default function AdminLoginPage() {
         <RealmLoginForm
           realm="ADMIN"
           identifierLabel="Correo operativo"
-          submitLabel="Continuar con MFA"
-          mfaCopy="Las cuentas administrativas requieren organización activa, RBAC y MFA."
+          submitLabel="Iniciar sesión"
+          mfaCopy="La sesión administrativa usa organización activa, RBAC y cookies separadas del elector."
         />
         <Link className="back-link" href="/admin">
           ← Volver a comisión

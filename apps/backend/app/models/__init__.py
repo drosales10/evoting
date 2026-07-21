@@ -1,4 +1,10 @@
-from app.models.auth import AdminUser, AdminUserRole, AuthSession, VoterOtpChallenge
+from app.models.auth import (
+    AdminMfaCredential,
+    AdminUser,
+    AdminUserRole,
+    AuthSession,
+    VoterOtpChallenge,
+)
 from app.models.core import (
     AuditLog,
     Candidate,
@@ -12,6 +18,7 @@ from app.models.core import (
 )
 
 __all__ = [
+    "AdminMfaCredential",
     "AdminUser",
     "AdminUserRole",
     "AuditLog",

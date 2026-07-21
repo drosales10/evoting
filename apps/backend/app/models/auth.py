@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -44,6 +44,25 @@ class AdminUserRole(CreatedAtMixin, Base):
         nullable=False,
     )
     role: Mapped[str] = mapped_column(String(50), nullable=False)
+
+
+class AdminMfaCredential(CreatedAtMixin, Base):
+    __tablename__ = "admin_mfa_credentials"
+    __table_args__ = (Index("ix_admin_mfa_credentials_organization", "organization_id"),)
+
+    admin_user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("admin_users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+    )
+    encrypted_secret: Mapped[str] = mapped_column(String(512), nullable=False)
+    last_used_counter: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuthSession(CreatedAtMixin, Base):
