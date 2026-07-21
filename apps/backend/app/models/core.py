@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    Date,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -44,6 +46,9 @@ class Member(CreatedAtMixin, Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "email", name="uq_members_organization_email"),
         UniqueConstraint("organization_id", "dni", name="uq_members_organization_dni"),
+        UniqueConstraint(
+            "organization_id", "registry_code", name="uq_members_organization_registry_code"
+        ),
         Index("ix_members_organization_status", "organization_id", "status"),
     )
 
@@ -56,8 +61,24 @@ class Member(CreatedAtMixin, Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     dni: Mapped[str] = mapped_column(String(50), nullable=False)
+    registry_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="ACTIVE")
+    member_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     membership_months: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    decade: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    graduation_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    semester: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    sex: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    alive: Mapped[bool | None] = mapped_column(nullable=True)
+    section: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    mention: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    graduation_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    photo_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    photo_content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    photo_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    photo_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    photo_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Election(CreatedAtMixin, Base):
