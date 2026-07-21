@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from fastapi import (
     APIRouter,
     Depends,
@@ -28,6 +30,7 @@ from app.auth.dependencies import require_admin
 from app.auth.tokens import AccessClaims
 from app.db.session import get_db_session
 from app.models import (
+    AuditLog,
     Candidate,
     Election,
     EncryptedBallot,
@@ -154,7 +157,46 @@ class AdminElectionResponse(BaseModel):
     end_time: datetime
     quorum_threshold_pct: Decimal
     status: ElectionStatus
+    activated_at: datetime | None
     created_at: datetime
+
+
+class AdminElectionActivationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    public_key: str = Field(min_length=16, max_length=8192)
+
+    @field_validator("public_key", mode="before")
+    @classmethod
+    def normalize_public_key(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("public_key", mode="after")
+    @classmethod
+    def validate_public_key_pem(cls, value: str) -> str:
+        if "-----BEGIN PUBLIC KEY-----" not in value or "-----END PUBLIC KEY-----" not in value:
+            raise ValueError("public_key must be an RSA SubjectPublicKeyInfo PEM")
+        try:
+            public_key = load_pem_public_key(value.encode())
+        except ValueError as exc:
+            raise ValueError("public_key is not valid PEM key material") from exc
+        if not isinstance(public_key, RSAPublicKey):
+            raise ValueError("public_key must contain an RSA public key")
+        return value
+
+
+class AdminElectionActivationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    election_id: UUID
+    election_status: ElectionStatus
+    activated_at: datetime
+    snapshot_member_count: int = Field(ge=0)
+    eligible_member_count: int = Field(ge=0)
+    position_count: int = Field(ge=1)
+    slate_count: int = Field(ge=1)
+    candidate_count: int = Field(ge=1)
+    public_key_sha256: str = Field(min_length=64, max_length=64)
 
 
 class AdminElectionEligibilityResponse(BaseModel):
@@ -827,6 +869,182 @@ async def freeze_election_roster(
     await session.commit()
     return await _eligibility_counts(
         session, election.id, claims.org_id, cast(ElectionStatus, election.status)
+    )
+
+
+@router.post(
+    "/elections/{election_id}/activate",
+    response_model=AdminElectionActivationResponse,
+)
+async def activate_election(
+    election_id: UUID,
+    payload: AdminElectionActivationRequest,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> AdminElectionActivationResponse:
+    """Open a frozen election after validating its immutable voting material."""
+    response.headers["Cache-Control"] = "no-store"
+    election = await session.scalar(
+        select(Election)
+        .where(Election.id == election_id, Election.organization_id == claims.org_id)
+        .with_for_update()
+    )
+    if election is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Election not found")
+    if election.status != "FREEZE":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only FREEZE elections can be activated",
+        )
+
+    activation_time = datetime.now(UTC)
+    if election.start_time > activation_time:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Election cannot be activated before its scheduled start time",
+        )
+    if election.end_time <= activation_time:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Election end time has already passed",
+        )
+
+    snapshot_member_count, eligible_member_count = (
+        int(value)
+        for value in (
+            await session.execute(
+                select(
+                    func.count(MemberElectionStatus.id),
+                    func.count(MemberElectionStatus.id).filter(
+                        MemberElectionStatus.eligible.is_(True)
+                    ),
+                ).where(
+                    MemberElectionStatus.election_id == election.id,
+                    MemberElectionStatus.organization_id == claims.org_id,
+                )
+            )
+        ).one()
+    )
+    current_member_count = int(
+        (
+            await session.execute(
+                select(func.count(Member.id)).where(Member.organization_id == claims.org_id)
+            )
+        ).scalar_one()
+    )
+    if snapshot_member_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Election has no eligibility snapshot",
+        )
+    if snapshot_member_count != current_member_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Member roster changed after freeze; review and recreate the election",
+        )
+    if eligible_member_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Election has no eligible members",
+        )
+
+    positions = list(
+        (
+            await session.scalars(
+                select(Position)
+                .where(Position.election_id == election.id)
+                .order_by(Position.display_order.asc(), Position.created_at.asc())
+            )
+        ).all()
+    )
+    if not positions:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Election requires at least one position before activation",
+        )
+
+    slates = list(
+        (
+            await session.scalars(
+                select(Slate)
+                .where(
+                    Slate.organization_id == claims.org_id,
+                    Slate.election_id == election.id,
+                )
+                .order_by(Slate.created_at.asc())
+            )
+        ).all()
+    )
+    if not slates:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Election requires at least one slate before activation",
+        )
+
+    candidate_rows = (
+        await session.execute(
+            select(Candidate.slate_id, Candidate.position_id)
+            .join(Slate, Slate.id == Candidate.slate_id)
+            .where(
+                Slate.organization_id == claims.org_id,
+                Slate.election_id == election.id,
+            )
+        )
+    ).all()
+    candidates_by_slate: dict[UUID, set[UUID]] = {}
+    for slate_id, position_id in candidate_rows:
+        candidates_by_slate.setdefault(slate_id, set()).add(position_id)
+    required_position_ids = {position.id for position in positions if position.is_required}
+    incomplete_slates = [
+        slate.name
+        for slate in slates
+        if not required_position_ids.issubset(candidates_by_slate.get(slate.id, set()))
+    ]
+    if incomplete_slates:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Every slate must have a candidate for each required position",
+        )
+    candidate_count = len(candidate_rows)
+    if candidate_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Election requires at least one candidate before activation",
+        )
+
+    public_key = payload.public_key
+    public_key_sha256 = hashlib.sha256(public_key.encode("utf-8")).hexdigest()
+    election.public_key = public_key
+    election.activated_at = activation_time
+    election.status = "ACTIVE"
+    session.add(
+        AuditLog(
+            organization_id=claims.org_id,
+            event_type="ELECTION_ACTIVATED",
+            actor_id_hash=hashlib.sha256(str(claims.sub).encode("utf-8")).hexdigest(),
+            details={
+                "election_id": str(election.id),
+                "snapshot_member_count": snapshot_member_count,
+                "eligible_member_count": eligible_member_count,
+                "position_count": len(positions),
+                "slate_count": len(slates),
+                "candidate_count": candidate_count,
+                "public_key_sha256": public_key_sha256,
+            },
+        )
+    )
+    await session.commit()
+    return AdminElectionActivationResponse(
+        election_id=election.id,
+        election_status=cast(ElectionStatus, election.status),
+        activated_at=activation_time,
+        snapshot_member_count=snapshot_member_count,
+        eligible_member_count=eligible_member_count,
+        position_count=len(positions),
+        slate_count=len(slates),
+        candidate_count=candidate_count,
+        public_key_sha256=public_key_sha256,
     )
 
 

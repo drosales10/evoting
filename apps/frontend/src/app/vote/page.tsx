@@ -1,18 +1,17 @@
 import Link from "next/link";
 
+import { VoterBallot } from "@/components/voter/voter-ballot";
+
 export default function VotePage() {
   return (
     <div className="page-shell narrow-shell">
       <span className="eyebrow">Realm VOTER</span>
       <h1>Espacio del elector</h1>
-      <p className="lead">La autenticación de elector y MFA estarán aisladas de la comisión electoral.</p>
-      <div className="notice">
-        <strong>Próximo paso</strong>
-        <p>Configurar request-otp, verify-otp y el token de emisión de un solo uso.</p>
-        <Link className="button button-primary inline-button" href="/vote/login">
-          Acceder como elector
-        </Link>
-      </div>
+      <p className="lead">La identidad del elector y la boleta cifrada permanecen en superficies separadas.</p>
+      <VoterBallot />
+      <Link className="button button-secondary inline-button" href="/vote/login">
+        Cambiar de elector
+      </Link>
     </div>
   );
 }

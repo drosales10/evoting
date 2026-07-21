@@ -49,6 +49,93 @@ Respuesta agregada:
 
 La UI ADMIN muestra `Abrir registro` para elecciones `DRAFT` y `Congelar padrón` para elecciones `REGISTRATION`. Una elección `FREEZE` se presenta como padrón congelado.
 
+## Activación de la votación
+
+La transición `FREEZE → ACTIVE` se ejecuta exclusivamente mediante:
+
+- `POST /api/v1/admin/elections/{election_id}/activate`
+
+Payload:
+
+```json
+{
+  "public_key": "-----BEGIN PUBLIC KEY-----\\n...\\n-----END PUBLIC KEY-----"
+}
+```
+
+La clave debe ser una clave pública RSA en formato **SubjectPublicKeyInfo PEM**. No se acepta una clave privada (`BEGIN PRIVATE KEY`/`BEGIN RSA PRIVATE KEY`) ni el formato PKCS#1 `BEGIN RSA PUBLIC KEY`. Si FastAPI devuelve `422`, la UI muestra ahora la ruta y el detalle de validación sin imprimir el contenido de la clave.
+
+Antes de activar, el backend verifica dentro de la organización del token ADMIN que:
+
+- La elección está en `FREEZE` y dentro de su ventana programada.
+- Existe un snapshot de elegibilidad y su cantidad coincide con el padrón actual.
+- Existe al menos un elector elegible.
+- Existe al menos una posición y una plancha.
+- Cada plancha tiene candidato para todas las posiciones obligatorias.
+- Existe al menos un candidato.
+- La clave pública no está vacía y se almacena junto con el estado de la elección.
+
+La activación escribe `activated_at`, cambia el estado a `ACTIVE` y agrega un evento `ELECTION_ACTIVATED` en `audit_logs`. La auditoría guarda únicamente el hash del actor, el hash SHA-256 de la clave pública y conteos agregados; nunca guarda la clave privada, tokens ni selecciones.
+
+La respuesta devuelve conteos de la ceremonia y la huella de la clave pública, no la clave privada. La UI ADMIN muestra **Activar votación** únicamente en elecciones `FREEZE`. La emisión VOTER, los tokens de emisión y la escritura en `encrypted_ballots` siguen fuera de esta fase.
+
+La migración `0006_election_activation` agrega de forma compatible `elections.activated_at` como columna nullable.
+
+## Piloto VOTER de ocho votos (solo desarrollo)
+
+La superficie VOTER dispone de entrega OTP por correo mediante Mailtrap y de un fallback de desarrollo controlado. Para instalar el SDK oficial de Python desde `apps/backend`:
+
+```powershell
+.\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt
+```
+
+Este backend FastAPI usa `mailtrap==2.6.1`, el SDK Python oficial. La versión npm `mailtrap@4.6.0` no debe instalarse en el frontend: el token de Mailtrap nunca puede llegar al navegador.
+
+Configura estas variables en el `.env` local:
+
+```env
+MAILTRAP_API_TOKEN=
+MAILTRAP_API_MODE=sending
+APP_PUBLIC_URL=http://localhost:3000
+SMTP_FROM="Entrega de OTP <no-reply@example.com>"
+PASSWORD_RESET_TTL_HOURS=2
+```
+
+`SMTP_FROM` debe usar un remitente autorizado por el dominio configurado en Mailtrap. Con `MAILTRAP_API_MODE=sending`, una solicitud válida genera un OTP de seis dígitos y lo envía al correo del elector. `PASSWORD_RESET_TTL_HOURS` queda disponible para el flujo futuro de recuperación de contraseña y no modifica la expiración del OTP, que es de cinco minutos.
+
+Para el piloto local, activa además:
+
+```env
+VOTER_TEST_MODE=true
+VOTER_TEST_CODE=123456
+```
+
+`VOTER_TEST_CODE` debe tener seis dígitos y no debe reutilizarse fuera de desarrollo. Reinicia el backend después de cambiarlo. Cuando `VOTER_TEST_MODE=false` y Mailtrap no está configurado, el endpoint mantiene la respuesta anti-enumerable y no crea sesión.
+
+Con `environment=development` y `VOTER_TEST_MODE=true`, cada solicitud válida imprime en la terminal del backend una línea como:
+
+```text
+[DEV ONLY] VOTER OTP issued: challenge_id=... code=654321 expires_at=... organization=... identifier=u***@dominio.test
+```
+
+El identificador se muestra enmascarado. En modo de prueba el código puede consultarse en la terminal; con Mailtrap configurado también se envía al correo. Si Mailtrap no está disponible, `development + VOTER_TEST_MODE=true` usa explícitamente la terminal como fallback y no bloquea la prueba; fuera de ese contexto el fallo de entrega devuelve `503`. El código solo se imprime bajo esas dos condiciones y nunca debe habilitarse en producción.
+
+Flujo:
+
+1. El elector entra a `/vote/login`, indica el `organization_slug` y su correo o documento, solicita OTP e introduce el código local.
+2. La sesión VOTER se emite con cookie distinta de ADMIN y devuelve un token CSRF para las mutaciones.
+3. En `/vote`, se introduce el UUID de la elección, se carga la boleta y se selecciona una plancha.
+4. El navegador cifra la selección con la clave pública RSA-OAEP/AES-GCM de la elección y envía únicamente `encrypted_payload`, `receipt_hash`, `zkp_proof` de piloto y `key_version`.
+5. El backend bloquea la fila de `MemberElectionStatus`, verifica elegibilidad, evita doble voto y registra la boleta sin `member_id`. La participación se marca en el snapshot dentro de la misma transacción.
+6. Para probar ocho votos, se repite el flujo con ocho miembros elegibles distintos, usando sesiones de navegador separadas o solicitando OTP nuevamente para cada miembro. Una misma sesión solo puede votar una vez.
+
+Endpoints VOTER:
+
+- `GET /api/v1/voter/elections/{election_id}`
+- `POST /api/v1/voter/elections/{election_id}/ballots`
+
+Este piloto verifica la integridad del `receipt_hash` contra el payload, pero todavía no implementa verificación criptográfica de ZKP ni escrutinio/descifrado. Por eso sirve para probar autenticación, elegibilidad, doble voto, cifrado de cliente, recibos y aislamiento de la urna; no es aún una ceremonia electoral de producción.
+
 ## Separación de la urna
 
 `MemberElectionStatus` permite controlar elegibilidad y participación por elección, pero `EncryptedBallot` continúa sin `member_id`, email, documento, sesión o token de emisión. La emisión VOTER/OTP permanece bloqueada hasta configurar un proveedor de entrega y una fase específica de autorización criptográfica.

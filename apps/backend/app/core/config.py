@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     secure_cookies: bool = False
     admin_mfa_required: bool = True
     mfa_encryption_key: str | None = None
+    voter_test_mode: bool = False
+    voter_test_code: str | None = None
+    mailtrap_api_token: str | None = None
+    mailtrap_api_mode: str = "sending"
+    app_public_url: str = "http://localhost:3000"
+    smtp_from: str = ""
+    password_reset_ttl_hours: int = 2
     seed_admin_email: str | None = None
     seed_admin_password: str | None = None
     seed_admin_name: str | None = None

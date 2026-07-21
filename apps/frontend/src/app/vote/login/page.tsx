@@ -16,10 +16,10 @@ export default function VoterLoginPage() {
           realm="VOTER"
           identifierLabel="Correo o documento"
           submitLabel="Solicitar o verificar OTP"
-          mfaCopy="El OTP será de un solo uso, tendrá expiración corta y nunca se guardará en auditoría."
+          mfaCopy="El OTP se envía al correo del elector cuando Mailtrap está configurado; en el piloto local también puede consultarse en la terminal del backend."
         />
-        <Link className="back-link" href="/vote">
-          ← Volver al espacio del elector
+        <Link className="back-link" href="/">
+          ← Volver al inicio
         </Link>
       </div>
     </div>

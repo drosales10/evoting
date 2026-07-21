@@ -9,8 +9,8 @@ const surfaces = [
   },
   {
     title: "Espacio del elector",
-    description: "El acceso a la boleta requerirá identidad de elector, MFA y autorización de emisión.",
-    href: "/vote",
+    description: "Solicita un OTP para acceder a la boleta como elector autenticado.",
+    href: "/vote/login",
     audience: "Elector",
   },
   {

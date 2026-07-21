@@ -101,6 +101,7 @@ class Election(CreatedAtMixin, Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="DRAFT")
     public_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Position(CreatedAtMixin, Base):

@@ -41,6 +41,12 @@ class VoterOtpVerifyRequest(BaseModel):
 class OtpAcceptedResponse(BaseModel):
     accepted: bool = True
     message: str = "If the voter is eligible, an OTP will be delivered."
+    challenge_id: str | None = None
+
+
+class VoterLoginResponse(BaseModel):
+    status: Literal["AUTHENTICATED"]
+    csrf_token: str
 
 
 class AuthContractResponse(BaseModel):

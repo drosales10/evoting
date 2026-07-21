@@ -52,7 +52,20 @@ type AdminElection = {
   end_time: string;
   quorum_threshold_pct: string;
   status: string;
+  activated_at: string | null;
   created_at: string;
+};
+
+type AdminElectionActivationResponse = {
+  election_id: string;
+  election_status: string;
+  activated_at: string;
+  snapshot_member_count: number;
+  eligible_member_count: number;
+  position_count: number;
+  slate_count: number;
+  candidate_count: number;
+  public_key_sha256: string;
 };
 
 type AdminElectionEligibility = {
@@ -115,12 +128,42 @@ type AdminPosition = {
 
 type ApiError = { detail?: string };
 
+type ApiValidationIssue = {
+  loc?: unknown;
+  msg?: unknown;
+};
+
 function apiErrorDetail(payload: unknown): string | null {
   if (typeof payload !== "object" || payload === null || !("detail" in payload)) {
     return null;
   }
   const detail = (payload as { detail?: unknown }).detail;
-  return typeof detail === "string" && detail.trim() ? detail : null;
+  if (typeof detail === "string" && detail.trim()) {
+    return detail;
+  }
+  if (!Array.isArray(detail)) {
+    return null;
+  }
+  const messages = detail.flatMap((issue: unknown) => {
+    if (typeof issue === "string" && issue.trim()) {
+      return [issue];
+    }
+    if (typeof issue !== "object" || issue === null) {
+      return [];
+    }
+    const validationIssue = issue as ApiValidationIssue;
+    const message = typeof validationIssue.msg === "string" ? validationIssue.msg : null;
+    if (!message) {
+      return [];
+    }
+    const location = Array.isArray(validationIssue.loc)
+      ? validationIssue.loc.filter((part): part is string | number =>
+          typeof part === "string" || typeof part === "number",
+        ).join(".")
+      : "respuesta";
+    return [`${location}: ${message}`];
+  });
+  return messages.length > 0 ? messages.join("; ") : null;
 }
 
 async function requestApiJson<T>(url: string, init: RequestInit = {}): Promise<T> {
@@ -196,6 +239,7 @@ export function AdminOverview() {
   const [memberBusy, setMemberBusy] = useState(false);
   const [positionBusy, setPositionBusy] = useState(false);
   const [lifecycleBusyId, setLifecycleBusyId] = useState<string | null>(null);
+  const [activationBusyId, setActivationBusyId] = useState<string | null>(null);
   const [photoBusyId, setPhotoBusyId] = useState<string | null>(null);
 
   async function loadData() {
@@ -270,7 +314,8 @@ export function AdminOverview() {
   }
 
   async function handleUploadPhoto(memberId: string, event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const inputElement = event.currentTarget;
+    const file = inputElement.files?.[0];
     if (!file) return;
     setPhotoBusyId(memberId);
     setMemberMessage(null);
@@ -295,7 +340,7 @@ export function AdminOverview() {
       setMemberMessage("No se pudo contactar la API administrativa.");
     } finally {
       setPhotoBusyId(null);
-      event.target.value = "";
+      inputElement.value = "";
     }
   }
 
@@ -303,7 +348,8 @@ export function AdminOverview() {
     event.preventDefault();
     setMemberBusy(true);
     setMemberMessage(null);
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
     try {
@@ -329,7 +375,7 @@ export function AdminOverview() {
       setOverview((current) =>
         current ? { ...current, member_count: current.member_count + 1 } : current,
       );
-      event.currentTarget.reset();
+      formElement.reset();
       setMemberMessage("Miembro agregado al padrón activo.");
     } catch {
       setMemberMessage("No se pudo contactar la API administrativa.");
@@ -342,7 +388,8 @@ export function AdminOverview() {
     event.preventDefault();
     setBusy(true);
     setMessage("");
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const startTime = String(form.get("start_time") ?? "");
     const endTime = String(form.get("end_time") ?? "");
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -371,7 +418,7 @@ export function AdminOverview() {
       setOverview((current) =>
         current ? { ...current, election_count: current.election_count + 1 } : current,
       );
-      event.currentTarget.reset();
+      formElement.reset();
       setMessage("Elección creada en estado DRAFT.");
     } catch {
       setMessage("No se pudo contactar la API administrativa.");
@@ -414,6 +461,59 @@ export function AdminOverview() {
       setMessage("No se pudo contactar la API administrativa.");
     } finally {
       setLifecycleBusyId(null);
+    }
+  }
+
+  async function handleActivateElection(
+    election: AdminElection,
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    setActivationBusyId(election.id);
+    setMessage("");
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const publicKey = String(form.get("election_public_key") ?? "").trim();
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    try {
+      const payload = await requestApiJson<AdminElectionActivationResponse>(
+        `${apiUrl}/api/v1/admin/elections/${election.id}/activate`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ public_key: publicKey }),
+        },
+      );
+      setElections((current) => current.map((item) =>
+        item.id === election.id
+          ? { ...item, status: payload.election_status, activated_at: payload.activated_at }
+          : item,
+      ));
+      if (selectedElection?.id === election.id) {
+        setSelectedElection({
+          ...selectedElection,
+          status: payload.election_status,
+          activated_at: payload.activated_at,
+        });
+      }
+      if (slateElection?.id === election.id) {
+        setSlateElection({
+          ...slateElection,
+          status: payload.election_status,
+          activated_at: payload.activated_at,
+        });
+      }
+      formElement.reset();
+      setMessage(
+        `Votación activa: ${payload.slate_count} planchas, ${payload.candidate_count} candidatos y ` +
+        `${payload.eligible_member_count} electores elegibles. Huella de clave pública: ` +
+        `${payload.public_key_sha256.slice(0, 16)}…`,
+      );
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "No se pudo activar la elección.");
+    } finally {
+      setActivationBusyId(null);
     }
   }
 
@@ -489,7 +589,8 @@ export function AdminOverview() {
     if (!slateElection) return;
     setSlateBusy(true);
     setSlateMessage(null);
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     try {
       const proxyMemberId = String(form.get("proxy_member_id") ?? "").trim();
@@ -507,7 +608,7 @@ export function AdminOverview() {
         },
       );
       setSlates((current) => [...current, payload]);
-      event.currentTarget.reset();
+      formElement.reset();
       setSlateMessage("Plancha creada en estado PENDING.");
     } catch (error: unknown) {
       setSlateMessage(
@@ -523,7 +624,8 @@ export function AdminOverview() {
     if (!selectedSlate) return;
     setCandidateBusy(true);
     setSlateMessage(null);
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     try {
       const payload = await requestApiJson<AdminCandidate>(
@@ -546,7 +648,7 @@ export function AdminOverview() {
           : slate,
       ));
       setSelectedSlate((current) => current ? { ...current, candidate_count: current.candidate_count + 1 } : current);
-      event.currentTarget.reset();
+      formElement.reset();
       setSlateMessage("Candidato registrado correctamente.");
     } catch (error: unknown) {
       setSlateMessage(
@@ -579,7 +681,8 @@ export function AdminOverview() {
     if (!selectedElection) return;
     setPositionBusy(true);
     setPositionMessage(null);
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
     try {
@@ -605,7 +708,7 @@ export function AdminOverview() {
       setPositions((current) => [...current, payload].sort(
         (left, right) => left.display_order - right.display_order,
       ));
-      event.currentTarget.reset();
+      formElement.reset();
       setPositionMessage("Posición creada correctamente.");
     } catch {
       setPositionMessage("No se pudo contactar la API administrativa.");
@@ -733,7 +836,27 @@ export function AdminOverview() {
                       {lifecycleBusyId === election.id ? "Congelando…" : "Congelar padrón"}
                     </button>
                   ) : election.status === "FREEZE" ? (
-                    <span className="form-message">Padrón congelado</span>
+                    <form className="auth-form" onSubmit={(event) => void handleActivateElection(election, event)}>
+                      <label htmlFor={`election-public-key-${election.id}`}>Clave pública de la elección</label>
+                      <textarea
+                        id={`election-public-key-${election.id}`}
+                        name="election_public_key"
+                        minLength={16}
+                        maxLength={8192}
+                        rows={3}
+                        placeholder="Pega aquí la clave pública versionada de la urna"
+                        required
+                      />
+                      <button
+                        className="button button-primary inline-button"
+                        type="submit"
+                        disabled={activationBusyId === election.id}
+                      >
+                        {activationBusyId === election.id ? "Activando…" : "Activar votación"}
+                      </button>
+                    </form>
+                  ) : election.status === "ACTIVE" ? (
+                    <span className="form-message">Votación activa</span>
                   ) : null}
                   {election.status === "REGISTRATION" || election.status === "FREEZE" ? (
                     <button

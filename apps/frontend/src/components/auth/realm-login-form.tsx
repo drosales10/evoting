@@ -24,6 +24,7 @@ export function RealmLoginForm({
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [mfaCredentials, setMfaCredentials] = useState<AdminCredentials | null>(null);
+  const [voterChallengeId, setVoterChallengeId] = useState<string | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -33,7 +34,28 @@ export function RealmLoginForm({
     try {
       const form = new FormData(event.currentTarget);
       if (realm === "VOTER") {
-        setMessage("La solicitud OTP será anti-enumerable; el proveedor de entrega aún no está configurado.");
+        const organizationSlug = String(form.get("organization_slug") ?? "").trim();
+        const identifier = String(form.get("identifier") ?? "").trim();
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+        const response = await fetch(`${apiUrl}/api/v1/auth/voter/request-otp`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ organization_slug: organizationSlug, identifier }),
+        });
+        const payload = (await response.json()) as {
+          message?: string;
+          detail?: string;
+          challenge_id?: string | null;
+        };
+        if (!response.ok) {
+          setMessage(payload.detail ?? "No fue posible solicitar el OTP.");
+        } else if (payload.challenge_id) {
+          setVoterChallengeId(payload.challenge_id);
+          setMessage("Solicitud aceptada. Introduce el código OTP de desarrollo.");
+        } else {
+          setMessage(payload.message ?? "Si el elector es elegible, recibirá un OTP.");
+        }
         return;
       }
 
@@ -58,6 +80,41 @@ export function RealmLoginForm({
       } else {
         setMessage("Sesión administrativa iniciada.");
       }
+    } catch {
+      setMessage("No se pudo contactar la API de autenticación.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleVoterVerify(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!voterChallengeId) return;
+    setMessage(null);
+    setBusy(true);
+    try {
+      const form = new FormData(event.currentTarget);
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const response = await fetch(`${apiUrl}/api/v1/auth/voter/verify-otp`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          challenge_id: voterChallengeId,
+          code: String(form.get("code") ?? ""),
+        }),
+      });
+      const payload = (await response.json()) as { csrf_token?: string; detail?: string };
+      if (!response.ok) {
+        setMessage(payload.detail ?? "El código OTP no es válido.");
+        return;
+      }
+      if (!payload.csrf_token) {
+        setMessage("La sesión VOTER no devolvió protección CSRF.");
+        return;
+      }
+      window.sessionStorage.setItem("evoting_voter_csrf", payload.csrf_token);
+      window.location.assign("/vote");
     } catch {
       setMessage("No se pudo contactar la API de autenticación.");
     } finally {
@@ -120,13 +177,40 @@ export function RealmLoginForm({
     );
   }
 
+  if (realm === "VOTER" && voterChallengeId) {
+    return (
+      <div className="auth-form">
+        <p className="form-help">Introduce el código recibido por correo. En el piloto local, también se registra en la terminal del backend.</p>
+        <form onSubmit={handleVoterVerify}>
+          <label htmlFor="voter-otp-code">Código OTP</label>
+          <input
+            id="voter-otp-code"
+            name="code"
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9]{6}"
+            minLength={6}
+            maxLength={6}
+            placeholder="Código de 6 dígitos"
+            required
+          />
+          <button className="button button-primary" type="submit" disabled={busy}>
+            {busy ? "Verificando…" : "Verificar OTP"}
+          </button>
+        </form>
+        {message ? <p className="form-message" role="status">{message}</p> : null}
+      </div>
+    );
+  }
+
   return (
     <form className="auth-form" onSubmit={handleSubmit}>
-      {realm === "ADMIN" ? (
+      {realm === "ADMIN" || realm === "VOTER" ? (
         <>
-          <label htmlFor="admin-organization">Organización</label>
+          <label htmlFor={`${realm.toLowerCase()}-organization`}>Organización</label>
           <input
-            id="admin-organization"
+            id={`${realm.toLowerCase()}-organization`}
             name="organization_slug"
             placeholder="organizacion-demo"
             required
@@ -141,19 +225,20 @@ export function RealmLoginForm({
         placeholder={realm === "ADMIN" ? "correo@organizacion.test" : "correo o documento"}
         required
       />
-      <label htmlFor={`${realm.toLowerCase()}-password`}>
-        {realm === "ADMIN" ? "Contraseña" : "Código OTP"}
-      </label>
-      <input
-        id={`${realm.toLowerCase()}-password`}
-        name="credential"
-        type={realm === "ADMIN" ? "password" : "text"}
-        inputMode={realm === "VOTER" ? "numeric" : undefined}
-        minLength={realm === "ADMIN" ? 12 : 6}
-        maxLength={realm === "VOTER" ? 6 : 256}
-        placeholder={realm === "ADMIN" ? "Mínimo 12 caracteres" : "Código de 6 dígitos"}
-        required
-      />
+      {realm === "ADMIN" ? (
+        <>
+          <label htmlFor="admin-password">Contraseña</label>
+          <input
+            id="admin-password"
+            name="credential"
+            type="password"
+            minLength={12}
+            maxLength={256}
+            placeholder="Mínimo 12 caracteres"
+            required
+          />
+        </>
+      ) : null}
       <p className="form-help">{mfaCopy}</p>
       <button className="button button-primary" type="submit" disabled={busy}>
         {busy ? "Procesando…" : submitLabel}

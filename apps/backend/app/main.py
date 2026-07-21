@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api.v1.admin.router import router as admin_router
 from app.api.v1.auth.router import router as auth_router
 from app.api.v1.public.router import router as public_router
+from app.api.v1.voter_router import router as voter_router
 from app.core.config import settings
 from app.db.session import dispose_engine, get_engine
 
@@ -37,6 +38,7 @@ app.add_middleware(
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(public_router, prefix="/api/v1")
+app.include_router(voter_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["health"])
