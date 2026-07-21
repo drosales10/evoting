@@ -22,6 +22,16 @@ type AdminElection = {
   created_at: string;
 };
 
+type AdminPosition = {
+  id: string;
+  election_id: string;
+  title: string;
+  code: string;
+  is_required: boolean;
+  display_order: number;
+  created_at: string;
+};
+
 type ApiError = { detail?: string };
 
 function formatDate(value: string) {
@@ -34,8 +44,12 @@ function formatDate(value: string) {
 export function AdminOverview() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [elections, setElections] = useState<AdminElection[]>([]);
+  const [selectedElection, setSelectedElection] = useState<AdminElection | null>(null);
+  const [positions, setPositions] = useState<AdminPosition[]>([]);
   const [message, setMessage] = useState("Cargando resumen administrativo…");
+  const [positionMessage, setPositionMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [positionBusy, setPositionBusy] = useState(false);
 
   async function loadData() {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -113,6 +127,67 @@ export function AdminOverview() {
     }
   }
 
+  async function loadPositions(election: AdminElection) {
+    setSelectedElection(election);
+    setPositionMessage(null);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    try {
+      const response = await fetch(`${apiUrl}/api/v1/admin/elections/${election.id}/positions`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const payload = (await response.json()) as AdminPosition[] & ApiError;
+      if (!response.ok) {
+        setPositionMessage(payload.detail ?? "No se pudieron cargar las posiciones.");
+        setPositions([]);
+        return;
+      }
+      setPositions(payload);
+    } catch {
+      setPositionMessage("No se pudo contactar la API administrativa.");
+    }
+  }
+
+  async function handleCreatePosition(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedElection) return;
+    setPositionBusy(true);
+    setPositionMessage(null);
+    const form = new FormData(event.currentTarget);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+    try {
+      const response = await fetch(
+        `${apiUrl}/api/v1/admin/elections/${selectedElection.id}/positions`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: String(form.get("position_title") ?? "").trim(),
+            code: String(form.get("position_code") ?? "").trim(),
+            is_required: form.get("position_required") === "on",
+            display_order: Number(form.get("position_order") ?? 0),
+          }),
+        },
+      );
+      const payload = (await response.json()) as AdminPosition & ApiError;
+      if (!response.ok) {
+        setPositionMessage(payload.detail ?? "No se pudo crear la posición.");
+        return;
+      }
+      setPositions((current) => [...current, payload].sort(
+        (left, right) => left.display_order - right.display_order,
+      ));
+      event.currentTarget.reset();
+      setPositionMessage("Posición creada correctamente.");
+    } catch {
+      setPositionMessage("No se pudo contactar la API administrativa.");
+    } finally {
+      setPositionBusy(false);
+    }
+  }
+
   if (!overview) {
     return <div className="notice"><p>{message}</p></div>;
   }
@@ -182,14 +257,73 @@ export function AdminOverview() {
                   <h3>{election.title}</h3>
                   <p>{election.voting_type} · Quórum {election.quorum_threshold_pct}%</p>
                 </div>
-                <time dateTime={election.start_time}>
-                  {election.status} · {formatDate(election.start_time)}
-                </time>
+                <div>
+                  <time dateTime={election.start_time}>
+                    {election.status} · {formatDate(election.start_time)}
+                  </time>
+                  <button
+                    className="button button-secondary inline-button"
+                    type="button"
+                    onClick={() => void loadPositions(election)}
+                  >
+                    Configurar posiciones
+                  </button>
+                </div>
               </article>
             ))}
           </div>
         )}
       </section>
+      {selectedElection ? (
+        <section className="empty-state" aria-labelledby="position-title">
+          <span className="eyebrow">Estructura de elección DRAFT</span>
+          <h2 id="position-title">Posiciones: {selectedElection.title}</h2>
+          <p>Las posiciones definen los cargos antes de registrar planchas y candidatos.</p>
+          <div className="election-list">
+            {positions.length === 0 ? (
+              <p>No hay posiciones configuradas.</p>
+            ) : positions.map((position) => (
+              <article className="election-item" key={position.id}>
+                <div>
+                  <h3>{position.title}</h3>
+                  <p>{position.code} · {position.is_required ? "Obligatoria" : "Opcional"}</p>
+                </div>
+                <time>Orden {position.display_order}</time>
+              </article>
+            ))}
+          </div>
+          <form className="auth-form" onSubmit={handleCreatePosition}>
+            <label htmlFor="position-title-input">Título de posición</label>
+            <input id="position-title-input" name="position_title" minLength={2} maxLength={100} required />
+            <label htmlFor="position-code-input">Código</label>
+            <input
+              id="position-code-input"
+              name="position_code"
+              pattern="[A-Za-z][A-Za-z0-9_-]{1,49}"
+              placeholder="PRESIDENTE"
+              maxLength={50}
+              required
+            />
+            <label htmlFor="position-order-input">Orden</label>
+            <input
+              id="position-order-input"
+              name="position_order"
+              type="number"
+              min="0"
+              max="10000"
+              defaultValue="0"
+              required
+            />
+            <label>
+              <input name="position_required" type="checkbox" defaultChecked /> Posición obligatoria
+            </label>
+            <button className="button button-primary" type="submit" disabled={positionBusy}>
+              {positionBusy ? "Creando…" : "Agregar posición"}
+            </button>
+          </form>
+          {positionMessage ? <p className="form-message" role="status">{positionMessage}</p> : null}
+        </section>
+      ) : null}
     </>
   );
 }
