@@ -81,6 +81,28 @@ La respuesta devuelve conteos de la ceremonia y la huella de la clave pública, 
 
 La migración `0006_election_activation` agrega de forma compatible `elections.activated_at` como columna nullable.
 
+## Cierre y preparación del escrutinio
+
+La elección puede cerrarse mediante `POST /api/v1/admin/elections/{election_id}/close`. En operación normal, el backend exige que termine la ventana de votación y que se cumpla el quórum. Para este piloto local existe un cierre explícito con `force_pilot=true`, permitido únicamente con `environment=development` y `VOTER_TEST_MODE=true`; queda registrado como `ELECTION_CLOSED` con conteos agregados y motivo, sin guardar identidad ni selección.
+
+Con 2750 elegibles y un quórum configurado de 8%, se requieren 220 votos. Ocho votos representan una validación técnica del piloto, no el cumplimiento del quórum electoral. El reporte de preparación está disponible en:
+
+```text
+GET /api/v1/admin/elections/{election_id}/tally-readiness
+```
+
+El reporte indica que el escrutinio requiere una clave privada RSA conservada fuera de la API, que la verificación ZKP aún no está disponible y que no se puede marcar `TALLIED` desde el backend. No se debe pegar ni enviar la clave privada a ADMIN, VOTER o cualquier endpoint HTTP.
+
+Después del cierre, si se conserva la clave privada correspondiente a la clave pública activada, el descifrado se ejecuta únicamente de forma local y de solo lectura:
+
+```powershell
+.\\.venv\\Scripts\\python.exe scripts/tally_encrypted_ballots.py `
+  --election-id a1f63f11-ee57-4502-b75f-bd8eb6be1a74 `
+  --private-key C:\\ruta\\segura\\clave-privada.pem
+```
+
+El script verifica que la clave coincida con la clave pública de la elección, valida cada `receipt_hash`, descifra el payload en memoria y muestra conteos por plancha. No escribe resultados, no cambia el estado a `TALLIED`, no guarda la clave privada y falla si alguna boleta no puede validarse o descifrarse.
+
 ## Piloto VOTER de ocho votos (solo desarrollo)
 
 La superficie VOTER dispone de entrega OTP por correo mediante Mailtrap y de un fallback de desarrollo controlado. Para instalar el SDK oficial de Python desde `apps/backend`:

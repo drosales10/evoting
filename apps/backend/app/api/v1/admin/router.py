@@ -1,6 +1,6 @@
 import hashlib
 from datetime import UTC, date, datetime
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated, Literal, cast
@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_admin
 from app.auth.tokens import AccessClaims
+from app.core.config import settings
 from app.db.session import get_db_session
 from app.models import (
     AuditLog,
@@ -197,6 +198,45 @@ class AdminElectionActivationResponse(BaseModel):
     slate_count: int = Field(ge=1)
     candidate_count: int = Field(ge=1)
     public_key_sha256: str = Field(min_length=64, max_length=64)
+
+
+class AdminElectionCloseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force_pilot: bool = False
+    reason: str = Field(min_length=10, max_length=255)
+
+
+class AdminElectionCloseResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    election_id: UUID
+    election_status: ElectionStatus
+    closed_at: datetime
+    eligible_member_count: int = Field(ge=0)
+    voted_member_count: int = Field(ge=0)
+    ballot_count: int = Field(ge=0)
+    quorum_threshold_pct: Decimal
+    quorum_required: int = Field(ge=0)
+    quorum_met: bool
+    pilot_override: bool
+
+
+class AdminTallyReadinessResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    election_id: UUID
+    election_status: ElectionStatus
+    eligible_member_count: int = Field(ge=0)
+    voted_member_count: int = Field(ge=0)
+    ballot_count: int = Field(ge=0)
+    quorum_threshold_pct: Decimal
+    quorum_required: int = Field(ge=0)
+    quorum_met: bool
+    public_key_sha256: str | None
+    requires_offline_private_key: bool
+    zkp_verification_available: bool
+    can_mark_tallied: bool
 
 
 class AdminElectionEligibilityResponse(BaseModel):
@@ -1045,6 +1085,179 @@ async def activate_election(
         slate_count=len(slates),
         candidate_count=candidate_count,
         public_key_sha256=public_key_sha256,
+    )
+
+
+def _required_quorum_votes(eligible_member_count: int, threshold_pct: Decimal) -> int:
+    if eligible_member_count <= 0 or threshold_pct <= 0:
+        return 0
+    required = (Decimal(eligible_member_count) * threshold_pct / Decimal("100")).to_integral_value(
+        rounding=ROUND_CEILING
+    )
+    return int(required)
+
+
+async def _election_participation_counts(
+    session: AsyncSession,
+    election_id: UUID,
+    organization_id: UUID,
+) -> tuple[int, int, int]:
+    eligible_count, voted_count = (
+        int(value)
+        for value in (
+            await session.execute(
+                select(
+                    func.count(MemberElectionStatus.id),
+                    func.count(MemberElectionStatus.id).filter(
+                        MemberElectionStatus.has_voted.is_(True)
+                    ),
+                ).where(
+                    MemberElectionStatus.election_id == election_id,
+                    MemberElectionStatus.organization_id == organization_id,
+                    MemberElectionStatus.eligible.is_(True),
+                )
+            )
+        ).one()
+    )
+    ballot_count = int(
+        (
+            await session.execute(
+                select(func.count(EncryptedBallot.id)).where(
+                    EncryptedBallot.election_id == election_id,
+                    EncryptedBallot.organization_id == organization_id,
+                )
+            )
+        ).scalar_one()
+    )
+    return eligible_count, voted_count, ballot_count
+
+
+@router.post(
+    "/elections/{election_id}/close",
+    response_model=AdminElectionCloseResponse,
+)
+async def close_election(
+    election_id: UUID,
+    payload: AdminElectionCloseRequest,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> AdminElectionCloseResponse:
+    """Close an election after quorum, or explicitly close the local pilot."""
+    response.headers["Cache-Control"] = "no-store"
+    election = await session.scalar(
+        select(Election)
+        .where(Election.id == election_id, Election.organization_id == claims.org_id)
+        .with_for_update()
+    )
+    if election is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Election not found")
+    if election.status != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only ACTIVE elections can be closed",
+        )
+
+    eligible_count, voted_count, ballot_count = await _election_participation_counts(
+        session, election.id, claims.org_id
+    )
+    quorum_required = _required_quorum_votes(eligible_count, election.quorum_threshold_pct)
+    quorum_met = voted_count >= quorum_required
+    pilot_override = payload.force_pilot
+    pilot_override_allowed = settings.environment == "development" and settings.voter_test_mode
+    if pilot_override and not pilot_override_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Pilot closure is available only in development test mode",
+        )
+    if ballot_count != voted_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Participation and encrypted ballot counts do not match",
+        )
+    if not pilot_override and election.end_time > datetime.now(UTC):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Election voting window is still open",
+        )
+    if not quorum_met and not pilot_override:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Quorum not met: {voted_count} votes received; " f"{quorum_required} required"
+            ),
+        )
+
+    closed_at = datetime.now(UTC)
+    election.status = "CLOSED"
+    session.add(
+        AuditLog(
+            organization_id=claims.org_id,
+            event_type="ELECTION_CLOSED",
+            actor_id_hash=hashlib.sha256(str(claims.sub).encode("utf-8")).hexdigest(),
+            details={
+                "election_id": str(election.id),
+                "eligible_member_count": eligible_count,
+                "voted_member_count": voted_count,
+                "ballot_count": ballot_count,
+                "quorum_threshold_pct": str(election.quorum_threshold_pct),
+                "quorum_required": quorum_required,
+                "quorum_met": quorum_met,
+                "pilot_override": pilot_override,
+                "reason": payload.reason,
+            },
+        )
+    )
+    await session.commit()
+    return AdminElectionCloseResponse(
+        election_id=election.id,
+        election_status=cast(ElectionStatus, election.status),
+        closed_at=closed_at,
+        eligible_member_count=eligible_count,
+        voted_member_count=voted_count,
+        ballot_count=ballot_count,
+        quorum_threshold_pct=election.quorum_threshold_pct,
+        quorum_required=quorum_required,
+        quorum_met=quorum_met,
+        pilot_override=pilot_override,
+    )
+
+
+@router.get(
+    "/elections/{election_id}/tally-readiness",
+    response_model=AdminTallyReadinessResponse,
+)
+async def get_tally_readiness(
+    election_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> AdminTallyReadinessResponse:
+    """Report tally prerequisites without decrypting or exposing ballot contents."""
+    response.headers["Cache-Control"] = "no-store"
+    election = await _get_organization_election(session, election_id, claims.org_id)
+    eligible_count, voted_count, ballot_count = await _election_participation_counts(
+        session, election.id, claims.org_id
+    )
+    quorum_required = _required_quorum_votes(eligible_count, election.quorum_threshold_pct)
+    public_key_sha256 = (
+        hashlib.sha256(election.public_key.encode("utf-8")).hexdigest()
+        if election.public_key
+        else None
+    )
+    return AdminTallyReadinessResponse(
+        election_id=election.id,
+        election_status=cast(ElectionStatus, election.status),
+        eligible_member_count=eligible_count,
+        voted_member_count=voted_count,
+        ballot_count=ballot_count,
+        quorum_threshold_pct=election.quorum_threshold_pct,
+        quorum_required=quorum_required,
+        quorum_met=voted_count >= quorum_required,
+        public_key_sha256=public_key_sha256,
+        requires_offline_private_key=True,
+        zkp_verification_available=False,
+        can_mark_tallied=False,
     )
 
 

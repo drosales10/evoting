@@ -68,6 +68,19 @@ type AdminElectionActivationResponse = {
   public_key_sha256: string;
 };
 
+type AdminElectionCloseResponse = {
+  election_id: string;
+  election_status: string;
+  closed_at: string;
+  eligible_member_count: number;
+  voted_member_count: number;
+  ballot_count: number;
+  quorum_threshold_pct: string;
+  quorum_required: number;
+  quorum_met: boolean;
+  pilot_override: boolean;
+};
+
 type AdminElectionEligibility = {
   election_id: string;
   election_status: string;
@@ -459,6 +472,41 @@ export function AdminOverview() {
       );
     } catch {
       setMessage("No se pudo contactar la API administrativa.");
+    } finally {
+      setLifecycleBusyId(null);
+    }
+  }
+
+  async function handleCloseElection(election: AdminElection) {
+    setLifecycleBusyId(election.id);
+    setMessage("");
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    try {
+      const payload = await requestApiJson<AdminElectionCloseResponse>(
+        `${apiUrl}/api/v1/admin/elections/${election.id}/close`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            force_pilot: true,
+            reason: "Cierre explícito del piloto local de ocho votos",
+          }),
+        },
+      );
+      setElections((current) => current.map((item) =>
+        item.id === election.id ? { ...item, status: payload.election_status } : item,
+      ));
+      if (selectedElection?.id === election.id) {
+        setSelectedElection({ ...selectedElection, status: payload.election_status });
+      }
+      setMessage(
+        `Piloto cerrado: ${payload.ballot_count} boletas y ${payload.voted_member_count} participaciones. ` +
+        `Quórum: ${payload.quorum_met ? "cumplido" : `no cumplido (${payload.quorum_required} requeridos)`}. ` +
+        "El escrutinio requiere la clave privada fuera de la API.",
+      );
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "No se pudo cerrar la elección.");
     } finally {
       setLifecycleBusyId(null);
     }
@@ -856,7 +904,19 @@ export function AdminOverview() {
                       </button>
                     </form>
                   ) : election.status === "ACTIVE" ? (
-                    <span className="form-message">Votación activa</span>
+                    <>
+                      <span className="form-message">Votación activa</span>
+                      <button
+                        className="button button-secondary inline-button"
+                        type="button"
+                        disabled={lifecycleBusyId === election.id}
+                        onClick={() => void handleCloseElection(election)}
+                      >
+                        {lifecycleBusyId === election.id ? "Cerrando…" : "Cerrar piloto local"}
+                      </button>
+                    </>
+                  ) : election.status === "CLOSED" ? (
+                    <span className="form-message">Votación cerrada; escrutinio local pendiente</span>
                   ) : null}
                   {election.status === "REGISTRATION" || election.status === "FREEZE" ? (
                     <button
