@@ -1,8 +1,10 @@
-from typing import Annotated
+from datetime import datetime
+from decimal import Decimal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +14,8 @@ from app.db.session import get_db_session
 from app.models import Election, EncryptedBallot, Member, Organization
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+ELECTION_MANAGER_ROLES = frozenset({"SUPER_ADMIN", "ELECTORAL_JUSTICE"})
+ElectionStatus = Literal["DRAFT", "REGISTRATION", "FREEZE", "ACTIVE", "CLOSED", "TALLIED"]
 
 
 class AdminOverviewResponse(BaseModel):
@@ -25,6 +29,41 @@ class AdminOverviewResponse(BaseModel):
     encrypted_ballot_count: int = Field(ge=0)
 
 
+class AdminElectionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=3, max_length=255)
+    voting_type: Literal["SLATE_PLURALITY"] = "SLATE_PLURALITY"
+    start_time: datetime
+    end_time: datetime
+    quorum_threshold_pct: Decimal = Field(default=Decimal("30.00"), ge=0, le=100)
+
+    @model_validator(mode="after")
+    def validate_schedule(self) -> "AdminElectionCreateRequest":
+        for value, field_name in (
+            (self.start_time, "start_time"),
+            (self.end_time, "end_time"),
+        ):
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError(f"{field_name} must include a timezone")
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be after start_time")
+        return self
+
+
+class AdminElectionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    id: UUID
+    title: str
+    voting_type: str
+    start_time: datetime
+    end_time: datetime
+    quorum_threshold_pct: Decimal
+    status: ElectionStatus
+    created_at: datetime
+
+
 async def _count_for_organization(
     session: AsyncSession,
     model: type[Member] | type[Election] | type[EncryptedBallot],
@@ -34,6 +73,17 @@ async def _count_for_organization(
         select(func.count()).select_from(model).where(model.organization_id == organization_id)
     )
     return int((await session.execute(statement)).scalar_one())
+
+
+async def _require_election_manager(
+    claims: Annotated[AccessClaims, Depends(require_admin)],
+) -> AccessClaims:
+    if not ELECTION_MANAGER_ROLES.intersection(claims.roles):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Election management role required",
+        )
+    return claims
 
 
 @router.get("/overview", response_model=AdminOverviewResponse)
@@ -63,3 +113,48 @@ async def admin_overview(
             session, EncryptedBallot, claims.org_id
         ),
     )
+
+
+@router.get("/elections", response_model=list[AdminElectionResponse])
+async def list_admin_elections(
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(require_admin)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> list[AdminElectionResponse]:
+    """List every election belonging to the authenticated ADMIN organization."""
+    response.headers["Cache-Control"] = "no-store"
+    statement = (
+        select(Election)
+        .where(Election.organization_id == claims.org_id)
+        .order_by(Election.start_time.asc(), Election.created_at.desc())
+    )
+    elections = await session.scalars(statement)
+    return [AdminElectionResponse.model_validate(election) for election in elections]
+
+
+@router.post(
+    "/elections",
+    response_model=AdminElectionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_admin_election(
+    payload: AdminElectionCreateRequest,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> AdminElectionResponse:
+    """Create a tenant-scoped election in DRAFT state."""
+    response.headers["Cache-Control"] = "no-store"
+    election = Election(
+        organization_id=claims.org_id,
+        title=payload.title.strip(),
+        voting_type=payload.voting_type,
+        start_time=payload.start_time,
+        end_time=payload.end_time,
+        quorum_threshold_pct=payload.quorum_threshold_pct,
+        status="DRAFT",
+    )
+    session.add(election)
+    await session.commit()
+    await session.refresh(election)
+    return AdminElectionResponse.model_validate(election)
