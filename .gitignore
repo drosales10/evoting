@@ -46,6 +46,8 @@ next-env.d.ts
 
 /docs/*
 !/docs/Padron_Administrativo.md
+!/docs/Ciclo_Electoral_Registro.md
+!/docs/Registro_Planchas_Candidatos.md
 /scripts
 /internal-docs
 !/scripts/

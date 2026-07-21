@@ -201,6 +201,7 @@ class MemberElectionStatus(CreatedAtMixin, Base):
         nullable=False,
     )
     eligible: Mapped[bool] = mapped_column(nullable=False, default=False)
+    eligibility_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     has_voted: Mapped[bool] = mapped_column(nullable=False, default=False)
     voted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

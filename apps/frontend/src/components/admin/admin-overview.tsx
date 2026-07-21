@@ -55,6 +55,54 @@ type AdminElection = {
   created_at: string;
 };
 
+type AdminElectionEligibility = {
+  election_id: string;
+  election_status: string;
+  snapshot_member_count: number;
+  eligible_member_count: number;
+  ineligible_member_count: number;
+};
+
+type AdminElectionEligibilityMember = {
+  member_id: string;
+  registry_code: string | null;
+  full_name: string;
+  dni: string;
+  email: string;
+  status: string;
+  alive: boolean | null;
+  eligible: boolean;
+  reason: string;
+};
+
+type EligibilityFilter = "all" | "eligible" | "ineligible";
+
+type AdminSlate = {
+  id: string;
+  organization_id: string;
+  election_id: string;
+  name: string;
+  slogan: string | null;
+  proxy_member_id: string | null;
+  status: string;
+  candidate_count: number;
+  created_at: string;
+};
+
+type AdminCandidate = {
+  id: string;
+  slate_id: string;
+  position_id: string;
+  position_code: string;
+  position_title: string;
+  member_id: string;
+  member_registry_code: string | null;
+  member_full_name: string;
+  member_dni: string;
+  bio: string | null;
+  created_at: string;
+};
+
 type AdminPosition = {
   id: string;
   election_id: string;
@@ -66,6 +114,56 @@ type AdminPosition = {
 };
 
 type ApiError = { detail?: string };
+
+function apiErrorDetail(payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null || !("detail" in payload)) {
+    return null;
+  }
+  const detail = (payload as { detail?: unknown }).detail;
+  return typeof detail === "string" && detail.trim() ? detail : null;
+}
+
+async function requestApiJson<T>(url: string, init: RequestInit = {}): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch {
+    throw new Error(
+      `No se pudo contactar la API administrativa en ${url}. ` +
+      "Verifica que el backend esté ejecutándose y que CORS permita el origen del frontend.",
+    );
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    if (!response.ok) {
+      throw new Error(
+        `La API administrativa respondió HTTP ${response.status}, pero no devolvió JSON.`,
+      );
+    }
+    throw new Error(
+      `La API administrativa respondió con un formato inesperado (HTTP ${response.status}).`,
+    );
+  }
+
+  if (!response.ok) {
+    const detail = apiErrorDetail(payload);
+    if (response.status === 401) {
+      throw new Error(
+        detail
+          ? `La sesión administrativa no está activa: ${detail}.`
+          : "La sesión administrativa no está activa o expiró (HTTP 401). Inicia sesión nuevamente.",
+      );
+    }
+    throw new Error(
+      `La API administrativa respondió HTTP ${response.status}: ${detail ?? "sin detalle"}.`,
+    );
+  }
+
+  return payload as T;
+}
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("es-CO", {
@@ -80,12 +178,24 @@ export function AdminOverview() {
   const [elections, setElections] = useState<AdminElection[]>([]);
   const [selectedElection, setSelectedElection] = useState<AdminElection | null>(null);
   const [positions, setPositions] = useState<AdminPosition[]>([]);
+  const [eligibilityElection, setEligibilityElection] = useState<AdminElection | null>(null);
+  const [eligibilityMembers, setEligibilityMembers] = useState<AdminElectionEligibilityMember[]>([]);
+  const [eligibilityFilter, setEligibilityFilter] = useState<EligibilityFilter>("all");
+  const [eligibilityBusy, setEligibilityBusy] = useState(false);
+  const [slateElection, setSlateElection] = useState<AdminElection | null>(null);
+  const [slates, setSlates] = useState<AdminSlate[]>([]);
+  const [selectedSlate, setSelectedSlate] = useState<AdminSlate | null>(null);
+  const [candidates, setCandidates] = useState<AdminCandidate[]>([]);
+  const [slateBusy, setSlateBusy] = useState(false);
+  const [candidateBusy, setCandidateBusy] = useState(false);
+  const [slateMessage, setSlateMessage] = useState<string | null>(null);
   const [message, setMessage] = useState("Cargando resumen administrativo…");
   const [memberMessage, setMemberMessage] = useState<string | null>(null);
   const [positionMessage, setPositionMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [memberBusy, setMemberBusy] = useState(false);
   const [positionBusy, setPositionBusy] = useState(false);
+  const [lifecycleBusyId, setLifecycleBusyId] = useState<string | null>(null);
   const [photoBusyId, setPhotoBusyId] = useState<string | null>(null);
 
   async function loadData() {
@@ -270,24 +380,197 @@ export function AdminOverview() {
     }
   }
 
+  async function handleElectionLifecycle(
+    election: AdminElection,
+    action: "open-registration" | "freeze",
+  ) {
+    setLifecycleBusyId(election.id);
+    setMessage("");
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    try {
+      const response = await fetch(
+        `${apiUrl}/api/v1/admin/elections/${election.id}/${action}`,
+        { method: "POST", credentials: "include" },
+      );
+      const payload = (await response.json()) as AdminElectionEligibility & ApiError;
+      if (!response.ok) {
+        setMessage(payload.detail ?? "No se pudo cambiar el estado de la elección.");
+        return;
+      }
+      setElections((current) => current.map((item) =>
+        item.id === election.id ? { ...item, status: payload.election_status } : item,
+      ));
+      if (selectedElection?.id === election.id) {
+        setSelectedElection({ ...selectedElection, status: payload.election_status });
+      }
+      if (slateElection?.id === election.id) {
+        setSlateElection({ ...slateElection, status: payload.election_status });
+      }
+      setMessage(
+        `${action === "open-registration" ? "Registro abierto" : "Padrón congelado"}. ` +
+        `${payload.eligible_member_count} elegibles de ${payload.snapshot_member_count}.`,
+      );
+    } catch {
+      setMessage("No se pudo contactar la API administrativa.");
+    } finally {
+      setLifecycleBusyId(null);
+    }
+  }
+
+  async function loadEligibility(
+    election: AdminElection,
+    filter: EligibilityFilter = eligibilityFilter,
+  ) {
+    setEligibilityElection(election);
+    setEligibilityBusy(true);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const query = filter === "all" ? "" : `?eligible=${filter === "eligible"}`;
+    try {
+      const response = await fetch(
+        `${apiUrl}/api/v1/admin/elections/${election.id}/eligibility/members${query}`,
+        { credentials: "include", cache: "no-store" },
+      );
+      const payload = (await response.json()) as AdminElectionEligibilityMember[] & ApiError;
+      if (!response.ok) {
+        setMessage(payload.detail ?? "No se pudo cargar el detalle de elegibilidad.");
+        setEligibilityMembers([]);
+        return;
+      }
+      setEligibilityMembers(payload);
+    } catch {
+      setMessage("No se pudo contactar la API administrativa.");
+      setEligibilityMembers([]);
+    } finally {
+      setEligibilityBusy(false);
+    }
+  }
+
+  async function loadSlates(election: AdminElection) {
+    setSlateElection(election);
+    setSelectedSlate(null);
+    setCandidates([]);
+    setSlateMessage(null);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    try {
+      const payload = await requestApiJson<AdminSlate[]>(
+        `${apiUrl}/api/v1/admin/elections/${election.id}/slates`,
+        { credentials: "include", cache: "no-store" },
+      );
+      setSlates(payload);
+      void loadPositions(election);
+    } catch (error: unknown) {
+      setSlateMessage(
+        error instanceof Error ? error.message : "No se pudieron cargar las planchas.",
+      );
+      setSlates([]);
+    }
+  }
+
+  async function loadCandidates(slate: AdminSlate) {
+    setSelectedSlate(slate);
+    setSlateMessage(null);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    try {
+      const payload = await requestApiJson<AdminCandidate[]>(
+        `${apiUrl}/api/v1/admin/slates/${slate.id}/candidates`,
+        { credentials: "include", cache: "no-store" },
+      );
+      setCandidates(payload);
+    } catch (error: unknown) {
+      setSlateMessage(
+        error instanceof Error ? error.message : "No se pudieron cargar los candidatos.",
+      );
+      setCandidates([]);
+    }
+  }
+
+  async function handleCreateSlate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!slateElection) return;
+    setSlateBusy(true);
+    setSlateMessage(null);
+    const form = new FormData(event.currentTarget);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    try {
+      const proxyMemberId = String(form.get("proxy_member_id") ?? "").trim();
+      const payload = await requestApiJson<AdminSlate>(
+        `${apiUrl}/api/v1/admin/elections/${slateElection.id}/slates`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: String(form.get("slate_name") ?? "").trim(),
+            slogan: String(form.get("slate_slogan") ?? "").trim() || null,
+            proxy_member_id: proxyMemberId || null,
+          }),
+        },
+      );
+      setSlates((current) => [...current, payload]);
+      event.currentTarget.reset();
+      setSlateMessage("Plancha creada en estado PENDING.");
+    } catch (error: unknown) {
+      setSlateMessage(
+        error instanceof Error ? error.message : "No se pudo crear la plancha.",
+      );
+    } finally {
+      setSlateBusy(false);
+    }
+  }
+
+  async function handleCreateCandidate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedSlate) return;
+    setCandidateBusy(true);
+    setSlateMessage(null);
+    const form = new FormData(event.currentTarget);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    try {
+      const payload = await requestApiJson<AdminCandidate>(
+        `${apiUrl}/api/v1/admin/slates/${selectedSlate.id}/candidates`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            position_id: String(form.get("candidate_position_id") ?? ""),
+            member_id: String(form.get("candidate_member_id") ?? ""),
+            bio: String(form.get("candidate_bio") ?? "").trim() || null,
+          }),
+        },
+      );
+      setCandidates((current) => [...current, payload]);
+      setSlates((current) => current.map((slate) =>
+        slate.id === selectedSlate.id
+          ? { ...slate, candidate_count: slate.candidate_count + 1 }
+          : slate,
+      ));
+      setSelectedSlate((current) => current ? { ...current, candidate_count: current.candidate_count + 1 } : current);
+      event.currentTarget.reset();
+      setSlateMessage("Candidato registrado correctamente.");
+    } catch (error: unknown) {
+      setSlateMessage(
+        error instanceof Error ? error.message : "No se pudo registrar el candidato.",
+      );
+    } finally {
+      setCandidateBusy(false);
+    }
+  }
+
   async function loadPositions(election: AdminElection) {
     setSelectedElection(election);
     setPositionMessage(null);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     try {
-      const response = await fetch(`${apiUrl}/api/v1/admin/elections/${election.id}/positions`, {
-        credentials: "include",
-        cache: "no-store",
-      });
-      const payload = (await response.json()) as AdminPosition[] & ApiError;
-      if (!response.ok) {
-        setPositionMessage(payload.detail ?? "No se pudieron cargar las posiciones.");
-        setPositions([]);
-        return;
-      }
+      const payload = await requestApiJson<AdminPosition[]>(
+        `${apiUrl}/api/v1/admin/elections/${election.id}/positions`,
+        { credentials: "include", cache: "no-store" },
+      );
       setPositions(payload);
-    } catch {
-      setPositionMessage("No se pudo contactar la API administrativa.");
+    } catch (error: unknown) {
+      setPositionMessage(
+        error instanceof Error ? error.message : "No se pudieron cargar las posiciones.",
+      );
     }
   }
 
@@ -423,12 +706,210 @@ export function AdminOverview() {
         {elections.length === 0 ? <div className="empty-state"><p>No hay elecciones creadas para esta organización.</p></div> : (
           <div className="election-list">{elections.map((election) => (
             <article className="election-item" key={election.id}>
-              <div><h3>{election.title}</h3><p>{election.voting_type} · Quórum {election.quorum_threshold_pct}%</p></div>
-              <div><time dateTime={election.start_time}>{election.status} · {formatDate(election.start_time)}</time><button className="button button-secondary inline-button" type="button" onClick={() => void loadPositions(election)}>Configurar posiciones</button></div>
+              <div>
+                <h3>{election.title}</h3>
+                <p>{election.voting_type} · Quórum {election.quorum_threshold_pct}%</p>
+                <p>Estado: {election.status}</p>
+              </div>
+              <div>
+                <time dateTime={election.start_time}>{formatDate(election.start_time)}</time>
+                <div className="hero-actions">
+                  {election.status === "DRAFT" ? (
+                    <button
+                      className="button button-primary inline-button"
+                      type="button"
+                      disabled={lifecycleBusyId === election.id}
+                      onClick={() => void handleElectionLifecycle(election, "open-registration")}
+                    >
+                      {lifecycleBusyId === election.id ? "Abriendo…" : "Abrir registro"}
+                    </button>
+                  ) : election.status === "REGISTRATION" ? (
+                    <button
+                      className="button button-primary inline-button"
+                      type="button"
+                      disabled={lifecycleBusyId === election.id}
+                      onClick={() => void handleElectionLifecycle(election, "freeze")}
+                    >
+                      {lifecycleBusyId === election.id ? "Congelando…" : "Congelar padrón"}
+                    </button>
+                  ) : election.status === "FREEZE" ? (
+                    <span className="form-message">Padrón congelado</span>
+                  ) : null}
+                  {election.status === "REGISTRATION" || election.status === "FREEZE" ? (
+                    <button
+                      className="button button-secondary inline-button"
+                      type="button"
+                      onClick={() => void loadEligibility(election)}
+                    >
+                      Ver elegibilidad
+                    </button>
+                  ) : null}
+                  {election.status === "REGISTRATION" || election.status === "FREEZE" ? (
+                    <button
+                      className="button button-secondary inline-button"
+                      type="button"
+                      onClick={() => void loadSlates(election)}
+                    >
+                      Gestionar planchas
+                    </button>
+                  ) : null}
+                  {election.status === "DRAFT" ? (
+                    <button
+                      className="button button-secondary inline-button"
+                      type="button"
+                      onClick={() => void loadPositions(election)}
+                    >
+                      Configurar posiciones
+                    </button>
+                  ) : null}
+                </div>
+              </div>
             </article>
           ))}</div>
         )}
       </section>
+      {eligibilityElection ? (
+        <section className="empty-state" aria-labelledby="eligibility-title">
+          <span className="eyebrow">Snapshot de elegibilidad</span>
+          <h2 id="eligibility-title">Elegibilidad: {eligibilityElection.title}</h2>
+          <p>
+            Este detalle corresponde al snapshot creado al abrir el registro. No se muestran fotos ni
+            datos de la urna.
+          </p>
+          <label htmlFor="eligibility-filter">Filtrar registros</label>
+          <select
+            id="eligibility-filter"
+            value={eligibilityFilter}
+            onChange={(event) => {
+              const nextFilter = event.target.value as EligibilityFilter;
+              setEligibilityFilter(nextFilter);
+              void loadEligibility(eligibilityElection, nextFilter);
+            }}
+            disabled={eligibilityBusy}
+          >
+            <option value="all">Todos</option>
+            <option value="eligible">Solo elegibles</option>
+            <option value="ineligible">Solo no elegibles</option>
+          </select>
+          {eligibilityBusy ? <p className="form-message">Cargando elegibilidad…</p> : null}
+          {!eligibilityBusy && eligibilityMembers.length === 0 ? (
+            <p className="form-message">No hay registros para este filtro.</p>
+          ) : (
+            <div className="election-list" aria-live="polite">
+              {eligibilityMembers.map((member) => (
+                <article className="election-item" key={member.member_id}>
+                  <div>
+                    <h3>{member.full_name}</h3>
+                    <p>
+                      {member.registry_code ?? "Sin código"} · Documento {member.dni}
+                    </p>
+                    <p>
+                      Estado: {member.status} · Vivo: {member.alive === true ? "Sí" : member.alive === false ? "No" : "No confirmado"}
+                    </p>
+                    <p>Motivo: {member.reason}</p>
+                  </div>
+                  <strong>{member.eligible ? "Elegible" : "No elegible"}</strong>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : null}
+      {slateElection ? (
+        <section className="empty-state" aria-labelledby="slate-title">
+          <span className="eyebrow">Registro de planchas</span>
+          <h2 id="slate-title">Planchas: {slateElection.title}</h2>
+          <p>
+            Las planchas se crean solo en REGISTRATION. En FREEZE se pueden revisar, pero no modificar.
+          </p>
+          {slates.length === 0 ? <p className="form-message">No hay planchas registradas.</p> : (
+            <div className="election-list">
+              {slates.map((slate) => (
+                <article className="election-item" key={slate.id}>
+                  <div>
+                    <h3>{slate.name}</h3>
+                    <p>{slate.slogan ?? "Sin lema"} · Estado {slate.status}</p>
+                    <p>Candidatos registrados: {slate.candidate_count}</p>
+                  </div>
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    onClick={() => void loadCandidates(slate)}
+                  >
+                    Ver candidatos
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+          {slateElection.status === "REGISTRATION" ? (
+            <form className="auth-form" onSubmit={handleCreateSlate}>
+              <label htmlFor="slate-name-input">Nombre de plancha</label>
+              <input id="slate-name-input" name="slate_name" minLength={2} maxLength={150} required />
+              <label htmlFor="slate-slogan-input">Lema</label>
+              <input id="slate-slogan-input" name="slate_slogan" maxLength={255} />
+              <label htmlFor="proxy-member-input">Apoderado (opcional)</label>
+              <select id="proxy-member-input" name="proxy_member_id" defaultValue="">
+                <option value="">Sin apoderado vinculado</option>
+                {members.map((member) => (
+                  <option value={member.id} key={member.id}>
+                    {member.full_name} · {member.registry_code ?? member.dni}
+                  </option>
+                ))}
+              </select>
+              <button className="button button-primary" type="submit" disabled={slateBusy}>
+                {slateBusy ? "Creando…" : "Crear plancha"}
+              </button>
+            </form>
+          ) : null}
+          {selectedSlate ? (
+            <div className="empty-state" aria-labelledby="candidate-title">
+              <h3 id="candidate-title">Candidatos: {selectedSlate.name}</h3>
+              {candidates.length === 0 ? <p>No hay candidatos registrados.</p> : (
+                <div className="election-list">
+                  {candidates.map((candidate) => (
+                    <article className="election-item" key={candidate.id}>
+                      <div>
+                        <h4>{candidate.position_code} · {candidate.position_title}</h4>
+                        <p>{candidate.member_full_name} · {candidate.member_registry_code ?? candidate.member_dni}</p>
+                        <p>{candidate.bio ?? "Sin biografía"}</p>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+              {slateElection.status === "REGISTRATION" ? (
+                <form className="auth-form" onSubmit={handleCreateCandidate}>
+                  <label htmlFor="candidate-position-input">Posición</label>
+                  <select id="candidate-position-input" name="candidate_position_id" required>
+                    <option value="">Selecciona una posición</option>
+                    {positions.map((position) => (
+                      <option value={position.id} key={position.id}>
+                        {position.code} · {position.title}
+                      </option>
+                    ))}
+                  </select>
+                  <label htmlFor="candidate-member-input">Miembro elegible</label>
+                  <select id="candidate-member-input" name="candidate_member_id" required>
+                    <option value="">Selecciona un miembro</option>
+                    {members.map((member) => (
+                      <option value={member.id} key={member.id}>
+                        {member.full_name} · {member.registry_code ?? member.dni}
+                      </option>
+                    ))}
+                  </select>
+                  <label htmlFor="candidate-bio-input">Biografía</label>
+                  <textarea id="candidate-bio-input" name="candidate_bio" maxLength={5000} rows={4} />
+                  <button className="button button-primary" type="submit" disabled={candidateBusy || positions.length === 0}>
+                    {candidateBusy ? "Registrando…" : "Registrar candidato"}
+                  </button>
+                </form>
+              ) : null}
+            </div>
+          ) : null}
+          {slateMessage ? <p className="form-message" role="status">{slateMessage}</p> : null}
+        </section>
+      ) : null}
       {selectedElection ? (
         <section className="empty-state" aria-labelledby="position-title">
           <span className="eyebrow">Estructura de elección DRAFT</span><h2 id="position-title">Posiciones: {selectedElection.title}</h2>

@@ -3,10 +3,20 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -18,12 +28,14 @@ from app.auth.dependencies import require_admin
 from app.auth.tokens import AccessClaims
 from app.db.session import get_db_session
 from app.models import (
+    Candidate,
     Election,
     EncryptedBallot,
     Member,
     MemberElectionStatus,
     Organization,
     Position,
+    Slate,
 )
 from app.services.member_spreadsheet import (
     MAX_IMPORT_BYTES,
@@ -145,6 +157,86 @@ class AdminElectionResponse(BaseModel):
     created_at: datetime
 
 
+class AdminElectionEligibilityResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    election_id: UUID
+    election_status: ElectionStatus
+    snapshot_member_count: int = Field(ge=0)
+    eligible_member_count: int = Field(ge=0)
+    ineligible_member_count: int = Field(ge=0)
+
+
+class AdminElectionEligibilityMemberResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    member_id: UUID
+    registry_code: str | None
+    full_name: str
+    dni: str
+    email: str
+    status: str
+    alive: bool | None
+    eligible: bool
+    reason: str
+
+
+class AdminSlateCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=2, max_length=150)
+    slogan: str | None = Field(default=None, max_length=255)
+    proxy_member_id: UUID | None = None
+
+    @field_validator("name", "slogan", mode="before")
+    @classmethod
+    def normalize_text(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
+class AdminSlateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    organization_id: UUID
+    election_id: UUID
+    name: str
+    slogan: str | None
+    proxy_member_id: UUID | None
+    status: str
+    candidate_count: int = Field(ge=0)
+    created_at: datetime
+
+
+class AdminCandidateCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    position_id: UUID
+    member_id: UUID
+    bio: str | None = Field(default=None, max_length=5000)
+
+    @field_validator("bio", mode="before")
+    @classmethod
+    def normalize_bio(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
+class AdminCandidateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    slate_id: UUID
+    position_id: UUID
+    position_code: str
+    position_title: str
+    member_id: UUID
+    member_registry_code: str | None
+    member_full_name: str
+    member_dni: str
+    bio: str | None
+    created_at: datetime
+
+
 class AdminPositionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -174,6 +266,16 @@ class AdminPositionResponse(BaseModel):
     is_required: bool
     display_order: int
     created_at: datetime
+
+
+def _eligibility_reason(status_value: str, alive: bool | None, eligible: bool) -> str:
+    if eligible:
+        return "Cumple: miembro ACTIVE y Vivo confirmado"
+    if status_value != "ACTIVE":
+        return "Miembro INACTIVE"
+    if alive is False:
+        return "Vivo marcado como 0"
+    return "Vivo no confirmado"
 
 
 async def _count_for_organization(
@@ -207,6 +309,100 @@ async def _require_member_manager(
             detail="Member management role required",
         )
     return claims
+
+
+async def _get_organization_election(
+    session: AsyncSession,
+    election_id: UUID,
+    organization_id: UUID,
+) -> Election:
+    election = await session.scalar(
+        select(Election).where(
+            Election.id == election_id,
+            Election.organization_id == organization_id,
+        )
+    )
+    if election is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Election not found",
+        )
+    return election
+
+
+async def _eligibility_counts(
+    session: AsyncSession,
+    election_id: UUID,
+    organization_id: UUID,
+    election_status: ElectionStatus,
+) -> AdminElectionEligibilityResponse:
+    snapshot_member_count = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(MemberElectionStatus)
+                .where(
+                    MemberElectionStatus.election_id == election_id,
+                    MemberElectionStatus.organization_id == organization_id,
+                )
+            )
+        ).scalar_one()
+    )
+    eligible_member_count = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(MemberElectionStatus)
+                .where(
+                    MemberElectionStatus.election_id == election_id,
+                    MemberElectionStatus.organization_id == organization_id,
+                    MemberElectionStatus.eligible.is_(True),
+                )
+            )
+        ).scalar_one()
+    )
+    return AdminElectionEligibilityResponse(
+        election_id=election_id,
+        election_status=election_status,
+        snapshot_member_count=snapshot_member_count,
+        eligible_member_count=eligible_member_count,
+        ineligible_member_count=snapshot_member_count - eligible_member_count,
+    )
+
+
+async def _get_slate_and_election(
+    session: AsyncSession,
+    slate_id: UUID,
+    organization_id: UUID,
+    allow_freeze: bool,
+) -> tuple[Slate, Election]:
+    slate = await session.scalar(
+        select(Slate).where(
+            Slate.id == slate_id,
+            Slate.organization_id == organization_id,
+        )
+    )
+    if slate is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Slate not found")
+    election = await _get_organization_election(session, slate.election_id, organization_id)
+    allowed_states = {"REGISTRATION", "FREEZE"} if allow_freeze else {"REGISTRATION"}
+    if election.status not in allowed_states:
+        expected = "REGISTRATION or FREEZE" if allow_freeze else "REGISTRATION"
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Slate operation requires election state {expected}",
+        )
+    return slate, election
+
+
+async def _candidate_count(session: AsyncSession, slate_id: UUID) -> int:
+    return int(
+        (
+            await session.execute(
+                select(func.count()).select_from(Candidate).where(Candidate.slate_id == slate_id)
+            )
+        ).scalar_one()
+    )
 
 
 async def _get_draft_election(
@@ -510,7 +706,12 @@ async def list_admin_positions(
 ) -> list[AdminPositionResponse]:
     """List positions only for a DRAFT election in the ADMIN tenant."""
     response.headers["Cache-Control"] = "no-store"
-    await _get_draft_election(session, election_id, claims.org_id)
+    election = await _get_organization_election(session, election_id, claims.org_id)
+    if election.status not in {"DRAFT", "REGISTRATION", "FREEZE"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Positions can only be reviewed before election activation",
+        )
     statement = (
         select(Position)
         .where(Position.election_id == election_id)
@@ -553,3 +754,369 @@ async def create_admin_position(
         ) from exc
     await session.refresh(position)
     return AdminPositionResponse.model_validate(position)
+
+
+@router.post(
+    "/elections/{election_id}/open-registration",
+    response_model=AdminElectionEligibilityResponse,
+)
+async def open_election_registration(
+    election_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> AdminElectionEligibilityResponse:
+    """Open registration and snapshot tenant-scoped member eligibility."""
+    response.headers["Cache-Control"] = "no-store"
+    election = await _get_organization_election(session, election_id, claims.org_id)
+    if election.status != "DRAFT":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only DRAFT elections can open registration",
+        )
+
+    members = await session.scalars(select(Member).where(Member.organization_id == claims.org_id))
+    for member in members:
+        member_eligible = member.status == "ACTIVE" and member.alive is True
+        session.add(
+            MemberElectionStatus(
+                organization_id=claims.org_id,
+                election_id=election.id,
+                member_id=member.id,
+                eligible=member_eligible,
+                eligibility_reason=_eligibility_reason(
+                    member.status, member.alive, member_eligible
+                ),
+                has_voted=False,
+            )
+        )
+    election.status = "REGISTRATION"
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Eligibility snapshot already exists for this election",
+        ) from exc
+    return await _eligibility_counts(
+        session, election.id, claims.org_id, cast(ElectionStatus, election.status)
+    )
+
+
+@router.post(
+    "/elections/{election_id}/freeze",
+    response_model=AdminElectionEligibilityResponse,
+)
+async def freeze_election_roster(
+    election_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> AdminElectionEligibilityResponse:
+    """Freeze the registration snapshot without changing the anonymous ballot model."""
+    response.headers["Cache-Control"] = "no-store"
+    election = await _get_organization_election(session, election_id, claims.org_id)
+    if election.status != "REGISTRATION":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only REGISTRATION elections can be frozen",
+        )
+    election.status = "FREEZE"
+    election.frozen_at = datetime.now(UTC)
+    await session.commit()
+    return await _eligibility_counts(
+        session, election.id, claims.org_id, cast(ElectionStatus, election.status)
+    )
+
+
+@router.get(
+    "/elections/{election_id}/eligibility",
+    response_model=AdminElectionEligibilityResponse,
+)
+async def get_election_eligibility(
+    election_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> AdminElectionEligibilityResponse:
+    """Return aggregate eligibility counts without exposing member identity."""
+    response.headers["Cache-Control"] = "no-store"
+    election = await _get_organization_election(session, election_id, claims.org_id)
+    return await _eligibility_counts(
+        session, election.id, claims.org_id, cast(ElectionStatus, election.status)
+    )
+
+
+@router.get(
+    "/elections/{election_id}/eligibility/members",
+    response_model=list[AdminElectionEligibilityMemberResponse],
+)
+async def list_election_eligibility_members(
+    election_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    eligible: bool | None = Query(default=None),
+) -> list[AdminElectionEligibilityMemberResponse]:
+    """List tenant-scoped snapshot eligibility details for ADMIN review."""
+    response.headers["Cache-Control"] = "no-store"
+    await _get_organization_election(session, election_id, claims.org_id)
+    statement = (
+        select(MemberElectionStatus, Member)
+        .join(Member, Member.id == MemberElectionStatus.member_id)
+        .where(
+            MemberElectionStatus.election_id == election_id,
+            MemberElectionStatus.organization_id == claims.org_id,
+            Member.organization_id == claims.org_id,
+        )
+        .order_by(Member.full_name.asc(), Member.created_at.asc())
+    )
+    if eligible is not None:
+        statement = statement.where(MemberElectionStatus.eligible.is_(eligible))
+    rows = (await session.execute(statement)).all()
+    return [
+        AdminElectionEligibilityMemberResponse(
+            member_id=member.id,
+            registry_code=member.registry_code,
+            full_name=member.full_name,
+            dni=member.dni,
+            email=member.email,
+            status=member.status,
+            alive=member.alive,
+            eligible=snapshot.eligible,
+            reason=snapshot.eligibility_reason
+            or _eligibility_reason(member.status, member.alive, snapshot.eligible),
+        )
+        for snapshot, member in rows
+    ]
+
+
+@router.get(
+    "/elections/{election_id}/slates",
+    response_model=list[AdminSlateResponse],
+)
+async def list_admin_slates(
+    election_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> list[AdminSlateResponse]:
+    """List tenant-scoped slates during registration or after freeze."""
+    response.headers["Cache-Control"] = "no-store"
+    election = await _get_organization_election(session, election_id, claims.org_id)
+    if election.status not in {"REGISTRATION", "FREEZE"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Slate review requires election state REGISTRATION or FREEZE",
+        )
+    statement = (
+        select(Slate, func.count(Candidate.id))
+        .outerjoin(Candidate, Candidate.slate_id == Slate.id)
+        .where(
+            Slate.organization_id == claims.org_id,
+            Slate.election_id == election.id,
+        )
+        .group_by(Slate.id)
+        .order_by(Slate.created_at.asc())
+    )
+    rows = (await session.execute(statement)).all()
+    return [
+        AdminSlateResponse(
+            id=slate.id,
+            organization_id=slate.organization_id,
+            election_id=slate.election_id,
+            name=slate.name,
+            slogan=slate.slogan,
+            proxy_member_id=slate.proxy_member_id,
+            status=slate.status,
+            candidate_count=int(candidate_count),
+            created_at=slate.created_at,
+        )
+        for slate, candidate_count in rows
+    ]
+
+
+@router.post(
+    "/elections/{election_id}/slates",
+    response_model=AdminSlateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_admin_slate(
+    election_id: UUID,
+    payload: AdminSlateCreateRequest,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> AdminSlateResponse:
+    """Create a slate only while the tenant election is in REGISTRATION."""
+    response.headers["Cache-Control"] = "no-store"
+    election = await _get_organization_election(session, election_id, claims.org_id)
+    if election.status != "REGISTRATION":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Slate creation requires election state REGISTRATION",
+        )
+    if payload.proxy_member_id is not None:
+        proxy_member = await session.scalar(
+            select(Member).where(
+                Member.id == payload.proxy_member_id,
+                Member.organization_id == claims.org_id,
+            )
+        )
+        if proxy_member is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Proxy member not found",
+            )
+    slate = Slate(
+        organization_id=claims.org_id,
+        election_id=election.id,
+        name=payload.name,
+        slogan=payload.slogan,
+        proxy_member_id=payload.proxy_member_id,
+        status="PENDING",
+    )
+    session.add(slate)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Slate name already exists for this election",
+        ) from exc
+    await session.refresh(slate)
+    return AdminSlateResponse(
+        id=slate.id,
+        organization_id=slate.organization_id,
+        election_id=slate.election_id,
+        name=slate.name,
+        slogan=slate.slogan,
+        proxy_member_id=slate.proxy_member_id,
+        status=slate.status,
+        candidate_count=0,
+        created_at=slate.created_at,
+    )
+
+
+@router.get(
+    "/slates/{slate_id}/candidates",
+    response_model=list[AdminCandidateResponse],
+)
+async def list_admin_candidates(
+    slate_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> list[AdminCandidateResponse]:
+    """List candidates for an organization-owned slate in registration or freeze."""
+    response.headers["Cache-Control"] = "no-store"
+    slate, _ = await _get_slate_and_election(session, slate_id, claims.org_id, allow_freeze=True)
+    statement = (
+        select(Candidate, Position, Member)
+        .join(Position, Position.id == Candidate.position_id)
+        .join(Member, Member.id == Candidate.member_id)
+        .where(
+            Candidate.slate_id == slate.id,
+            Position.election_id == slate.election_id,
+            Member.organization_id == claims.org_id,
+        )
+        .order_by(Position.display_order.asc(), Candidate.created_at.asc())
+    )
+    rows = (await session.execute(statement)).all()
+    return [
+        AdminCandidateResponse(
+            id=candidate.id,
+            slate_id=candidate.slate_id,
+            position_id=position.id,
+            position_code=position.code,
+            position_title=position.title,
+            member_id=member.id,
+            member_registry_code=member.registry_code,
+            member_full_name=member.full_name,
+            member_dni=member.dni,
+            bio=candidate.bio,
+            created_at=candidate.created_at,
+        )
+        for candidate, position, member in rows
+    ]
+
+
+@router.post(
+    "/slates/{slate_id}/candidates",
+    response_model=AdminCandidateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_admin_candidate(
+    slate_id: UUID,
+    payload: AdminCandidateCreateRequest,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> AdminCandidateResponse:
+    """Register an eligible member for a slate position during REGISTRATION."""
+    response.headers["Cache-Control"] = "no-store"
+    slate, election = await _get_slate_and_election(
+        session, slate_id, claims.org_id, allow_freeze=False
+    )
+    position = await session.scalar(
+        select(Position).where(
+            Position.id == payload.position_id,
+            Position.election_id == election.id,
+        )
+    )
+    if position is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Position not found")
+    member = await session.scalar(
+        select(Member).where(
+            Member.id == payload.member_id,
+            Member.organization_id == claims.org_id,
+        )
+    )
+    if member is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Candidate member not found",
+        )
+    eligibility = await session.scalar(
+        select(MemberElectionStatus).where(
+            MemberElectionStatus.election_id == election.id,
+            MemberElectionStatus.organization_id == claims.org_id,
+            MemberElectionStatus.member_id == member.id,
+        )
+    )
+    if eligibility is None or not eligibility.eligible:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Candidate member is not eligible for this election",
+        )
+    candidate = Candidate(
+        slate_id=slate.id,
+        position_id=position.id,
+        member_id=member.id,
+        bio=payload.bio,
+    )
+    session.add(candidate)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This slate already has a candidate for the selected position",
+        ) from exc
+    await session.refresh(candidate)
+    return AdminCandidateResponse(
+        id=candidate.id,
+        slate_id=candidate.slate_id,
+        position_id=position.id,
+        position_code=position.code,
+        position_title=position.title,
+        member_id=member.id,
+        member_registry_code=member.registry_code,
+        member_full_name=member.full_name,
+        member_dni=member.dni,
+        bio=candidate.bio,
+        created_at=candidate.created_at,
+    )
