@@ -9,8 +9,14 @@ import "mapbox-gl/dist/mapbox-gl.css";
 
 const LEVELS = ["N1", "N2", "N3", "N4", "N5"] as const;
 
-export function ClientMapView({ data }: { data: FeatureCollection | null }) {
-  const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "";
+export function ClientMapView({
+  data,
+  mapboxToken,
+}: {
+  data: FeatureCollection | null;
+  mapboxToken?: string;
+}) {
+  const token = (mapboxToken ?? process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "").trim();
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
     N1: true,
     N2: true,
