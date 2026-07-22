@@ -105,6 +105,11 @@ El script genera un artefacto firmado con `artifact`, `signature` y `artifact_sh
 
 La publicación oficial exige quórum. Para este piloto, `pilot_override=true` permite persistir el resultado como `TALLIED` solo en development con `VOTER_TEST_MODE=true`; queda marcado como piloto y no aparece en resultados públicos. La tabla `election_tallies` no contiene miembros, sesiones, selecciones individuales ni clave privada. El endpoint público `/api/v1/public/elections/{election_id}/results` solo expone tallies `TALLIED` con quórum cumplido y sin override de piloto.
 
+Con `REQUIRE_DUAL_TALLY_APPROVAL=true`, la publicación requiere `approval_stage=propose` y luego `confirm` por un segundo ADMIN distinto. La verificación independiente está en `/api/v1/public/verify/{artifact_hash}` y en la UI `/verify/[artifactHash]`.
+
+El flag `can_mark_tallied` en `tally-readiness` es `true` cuando la elección está `CLOSED`. `zkp_verification_available` refleja `ZKP_VERIFICATION_ENABLED` (solo activar tras auditoría; ver [ZKP_Ballot_Integrity.md](ZKP_Ballot_Integrity.md)).
+
+
 La migración `0007_election_tallies` debe revisarse y aplicarse antes de publicar un tally. No se aplica automáticamente en este flujo.
 
 ## Piloto VOTER de ocho votos (solo desarrollo)

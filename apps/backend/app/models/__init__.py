@@ -7,9 +7,11 @@ from app.models.auth import (
 )
 from app.models.core import (
     AuditLog,
+    BallotIssuanceToken,
     Candidate,
     Election,
     ElectionTally,
+    ElectionTallyProposal,
     EncryptedBallot,
     Member,
     MemberElectionStatus,
@@ -24,9 +26,11 @@ __all__ = [
     "AdminUserRole",
     "AuditLog",
     "AuthSession",
+    "BallotIssuanceToken",
     "Candidate",
     "Election",
     "ElectionTally",
+    "ElectionTallyProposal",
     "EncryptedBallot",
     "Member",
     "MemberElectionStatus",

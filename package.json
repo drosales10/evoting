@@ -10,6 +10,7 @@
     "dev:frontend": "pnpm --filter @evoting/frontend dev",
     "build:frontend": "pnpm --filter @evoting/frontend build",
     "lint:frontend": "pnpm --filter @evoting/frontend lint",
-    "typecheck:frontend": "pnpm --filter @evoting/frontend typecheck"
+    "typecheck:frontend": "pnpm --filter @evoting/frontend typecheck",
+    "test:e2e": "pnpm --filter @evoting/frontend test:e2e"
   }
 }

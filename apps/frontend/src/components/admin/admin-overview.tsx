@@ -82,14 +82,17 @@ type AdminElectionCloseResponse = {
 };
 
 type AdminTallyPublishResponse = {
-  tally_id: string;
+  tally_id?: string | null;
+  proposal_id?: string | null;
   election_id: string;
   election_status: string;
   artifact_sha256: string;
   ballot_count: number;
   quorum_met: boolean;
   pilot_override: boolean;
-  published_at: string;
+  published_at?: string | null;
+  approval_stage?: string;
+  acta_sha256?: string | null;
 };
 
 type AdminElectionAudit = {
@@ -500,20 +503,31 @@ export function AdminOverview() {
     }
   }
 
-  async function handleCloseElection(election: AdminElection) {
+  async function handleCloseElection(election: AdminElection, forcePilot: boolean) {
     setLifecycleBusyId(election.id);
     setMessage("");
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const csrfToken = window.sessionStorage.getItem("evoting_admin_csrf");
+    if (!csrfToken) {
+      setMessage("Sesión ADMIN sin CSRF. Inicia sesión nuevamente.");
+      setLifecycleBusyId(null);
+      return;
+    }
     try {
       const payload = await requestApiJson<AdminElectionCloseResponse>(
         `${apiUrl}/api/v1/admin/elections/${election.id}/close`,
         {
           method: "POST",
           credentials: "include",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrfToken,
+          },
           body: JSON.stringify({
-            force_pilot: true,
-            reason: "Cierre explícito del piloto local de ocho votos",
+            force_pilot: forcePilot,
+            reason: forcePilot
+              ? "Cierre explícito del piloto local de desarrollo"
+              : "Cierre oficial tras ventana electoral y verificación de quórum",
           }),
         },
       );
@@ -524,7 +538,7 @@ export function AdminOverview() {
         setSelectedElection({ ...selectedElection, status: payload.election_status });
       }
       setMessage(
-        `Piloto cerrado: ${payload.ballot_count} boletas y ${payload.voted_member_count} participaciones. ` +
+        `${forcePilot ? "Piloto" : "Elección"} cerrada: ${payload.ballot_count} boletas y ${payload.voted_member_count} participaciones. ` +
         `Quórum: ${payload.quorum_met ? "cumplido" : `no cumplido (${payload.quorum_required} requeridos)`}. ` +
         "El escrutinio requiere la clave privada fuera de la API.",
       );
@@ -545,15 +559,28 @@ export function AdminOverview() {
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const publicKey = String(form.get("election_public_key") ?? "").trim();
+    const signingPublicKey = String(form.get("election_signing_public_key") ?? "").trim();
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const csrfToken = window.sessionStorage.getItem("evoting_admin_csrf");
+    if (!csrfToken) {
+      setMessage("Sesión ADMIN sin CSRF. Inicia sesión nuevamente.");
+      setActivationBusyId(null);
+      return;
+    }
     try {
       const payload = await requestApiJson<AdminElectionActivationResponse>(
         `${apiUrl}/api/v1/admin/elections/${election.id}/activate`,
         {
           method: "POST",
           credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ public_key: publicKey }),
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrfToken,
+          },
+          body: JSON.stringify({
+            public_key: publicKey,
+            ...(signingPublicKey ? { signing_public_key: signingPublicKey } : {}),
+          }),
         },
       );
       setElections((current) => current.map((item) =>
@@ -600,6 +627,12 @@ export function AdminOverview() {
     const rawArtifact = String(form.get("tally_artifact") ?? "").trim();
     const pilotOverride = form.get("tally_pilot_override") === "on";
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const csrfToken = window.sessionStorage.getItem("evoting_admin_csrf");
+    if (!csrfToken) {
+      setMessage("Sesión ADMIN sin CSRF. Inicia sesión nuevamente.");
+      setTallyBusyId(null);
+      return;
+    }
     try {
       const parsed = JSON.parse(rawArtifact) as {
         artifact?: Record<string, unknown>;
@@ -615,11 +648,15 @@ export function AdminOverview() {
         {
           method: "POST",
           credentials: "include",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrfToken,
+          },
           body: JSON.stringify({
             artifact,
             signature,
             pilot_override: pilotOverride,
+            approval_stage: "publish",
             reason: pilotOverride
               ? "Publicación explícita del tally piloto firmado"
               : "Publicación del tally firmado tras verificación de quorum",
@@ -634,9 +671,12 @@ export function AdminOverview() {
       }
       formElement.reset();
       setMessage(
-        `Tally verificado y publicado: ${payload.ballot_count} boletas. ` +
-        `Resultado ${payload.pilot_override ? "de piloto" : "oficial"}; ` +
-        `huella del artefacto ${payload.artifact_sha256.slice(0, 16)}…`,
+        payload.approval_stage === "propose"
+          ? `Tally propuesto (doble aprobación pendiente). Huella ${payload.artifact_sha256.slice(0, 16)}…`
+          : `Tally verificado y publicado: ${payload.ballot_count} boletas. ` +
+            `Resultado ${payload.pilot_override ? "de piloto" : "oficial"}; ` +
+            `huella del artefacto ${payload.artifact_sha256.slice(0, 16)}…` +
+            (payload.acta_sha256 ? ` Acta ${payload.acta_sha256.slice(0, 16)}…` : ""),
       );
     } catch (error: unknown) {
       setMessage(error instanceof Error ? error.message : "No se pudo publicar el tally.");
@@ -983,15 +1023,26 @@ export function AdminOverview() {
                     </button>
                   ) : election.status === "FREEZE" ? (
                     <form className="auth-form" onSubmit={(event) => void handleActivateElection(election, event)}>
-                      <label htmlFor={`election-public-key-${election.id}`}>Clave pública de la elección</label>
+                      <label htmlFor={`election-public-key-${election.id}`}>Clave pública de cifrado (urna)</label>
                       <textarea
                         id={`election-public-key-${election.id}`}
                         name="election_public_key"
                         minLength={16}
                         maxLength={8192}
                         rows={3}
-                        placeholder="Pega aquí la clave pública versionada de la urna"
+                        placeholder="PEM SubjectPublicKeyInfo de cifrado"
                         required
+                      />
+                      <label htmlFor={`election-signing-key-${election.id}`}>
+                        Clave pública de firma (opcional; recomendada en producción)
+                      </label>
+                      <textarea
+                        id={`election-signing-key-${election.id}`}
+                        name="election_signing_public_key"
+                        minLength={16}
+                        maxLength={8192}
+                        rows={3}
+                        placeholder="PEM distinta para firmar el acta; si se omite se reutiliza la de urna"
                       />
                       <button
                         className="button button-primary inline-button"
@@ -1005,12 +1056,20 @@ export function AdminOverview() {
                     <>
                       <span className="form-message">Votación activa</span>
                       <button
+                        className="button button-primary inline-button"
+                        type="button"
+                        disabled={lifecycleBusyId === election.id}
+                        onClick={() => void handleCloseElection(election, false)}
+                      >
+                        {lifecycleBusyId === election.id ? "Cerrando…" : "Cerrar oficial"}
+                      </button>
+                      <button
                         className="button button-secondary inline-button"
                         type="button"
                         disabled={lifecycleBusyId === election.id}
-                        onClick={() => void handleCloseElection(election)}
+                        onClick={() => void handleCloseElection(election, true)}
                       >
-                        {lifecycleBusyId === election.id ? "Cerrando…" : "Cerrar piloto local"}
+                        {lifecycleBusyId === election.id ? "Cerrando…" : "Cerrar piloto (solo dev)"}
                       </button>
                     </>
                   ) : election.status === "CLOSED" ? (

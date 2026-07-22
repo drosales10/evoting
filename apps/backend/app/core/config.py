@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     mfa_encryption_key: str | None = None
     voter_test_mode: bool = False
     voter_test_code: str | None = None
+    # Cryptographic / production gates
+    zkp_verification_enabled: bool = False
+    require_dual_tally_approval: bool = False
+    ballot_issuance_required: bool = True
+    force_https_redirect: bool = False
+    rate_limit_otp_per_minute: int = 5
+    rate_limit_login_per_minute: int = 10
+    rate_limit_ballot_per_minute: int = 20
     mailtrap_api_token: str | None = None
     mailtrap_api_mode: str = "sending"
     app_public_url: str = "http://localhost:3000"
@@ -37,6 +45,14 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.lower() in {"production", "prod", "staging"}
+
+    @property
+    def pilot_overrides_allowed(self) -> bool:
+        return self.environment == "development" and self.voter_test_mode
 
 
 @lru_cache

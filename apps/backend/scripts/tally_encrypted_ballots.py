@@ -57,19 +57,9 @@ def _load_private_key(path: Path) -> RSAPrivateKey:
     return key
 
 
-def _assert_key_matches(election: Election, private_key: RSAPrivateKey) -> str:
-    if not election.public_key:
-        raise TallyError("Election has no stored public key")
-    stored_public_key = load_pem_public_key(election.public_key.encode("utf-8"))
-    derived_public_key = private_key.public_key()
-    stored_der = stored_public_key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
-    derived_der = derived_public_key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
-    if stored_der != derived_der:
-        raise TallyError("Private key does not match the election public key")
-    return hashlib.sha256(election.public_key.encode("utf-8")).hexdigest()
-
-
-def _decrypt_slate_id(ballot: EncryptedBallot, private_key: RSAPrivateKey) -> str:
+def _decrypt_ballot(
+    ballot: EncryptedBallot, private_key: RSAPrivateKey
+) -> tuple[str, str | None]:
     try:
         payload = json.loads(ballot.encrypted_payload)
     except json.JSONDecodeError as exc:
@@ -99,10 +89,42 @@ def _decrypt_slate_id(ballot: EncryptedBallot, private_key: RSAPrivateKey) -> st
     slate_id = decoded.get("slate_id")
     if not isinstance(slate_id, str):
         raise TallyError(f"Ballot {ballot.id} has no valid slate selection")
-    return slate_id
+    nonce = decoded.get("nonce")
+    return slate_id, nonce if isinstance(nonce, str) else None
 
 
-async def tally_encrypted_ballots(election_id: UUID, private_key_path: Path) -> dict[str, Any]:
+def _assert_encryption_key_matches(election: Election, private_key: RSAPrivateKey) -> None:
+    if not election.public_key:
+        raise TallyError("Election has no stored public key")
+    stored_public_key = load_pem_public_key(election.public_key.encode("utf-8"))
+    derived_public_key = private_key.public_key()
+    stored_der = stored_public_key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    derived_der = derived_public_key.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    if stored_der != derived_der:
+        raise TallyError("Encryption private key does not match the election public key")
+
+
+def _signing_key_hash(election: Election, signing_key: RSAPrivateKey) -> str:
+    pem = election.signing_public_key or election.public_key
+    if not pem:
+        raise TallyError("Election has no signing/public key")
+    stored = load_pem_public_key(pem.encode("utf-8"))
+    derived = signing_key.public_key()
+    stored_der = stored.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    derived_der = derived.public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    if stored_der != derived_der:
+        raise TallyError("Signing private key does not match the election signing public key")
+    return hashlib.sha256(pem.encode("utf-8")).hexdigest()
+
+
+async def tally_encrypted_ballots(
+    election_id: UUID,
+    private_key_path: Path,
+    signing_key_path: Path | None = None,
+) -> dict[str, Any]:
+    from app.core.config import settings
+    from app.services.ballot_crypto import BallotCryptoError, verify_proof_after_decrypt
+
     factory = get_session_factory()
     async with factory() as session:
         election = await session.scalar(select(Election).where(Election.id == election_id))
@@ -112,7 +134,11 @@ async def tally_encrypted_ballots(election_id: UUID, private_key_path: Path) -> 
             raise TallyError("Election must be CLOSED before local tally")
 
         private_key = _load_private_key(private_key_path)
-        public_key_sha256 = _assert_key_matches(election, private_key)
+        _assert_encryption_key_matches(election, private_key)
+        signing_key = (
+            _load_private_key(signing_key_path) if signing_key_path else private_key
+        )
+        public_key_sha256 = _signing_key_hash(election, signing_key)
         slates = list(
             (
                 await session.scalars(
@@ -134,9 +160,20 @@ async def tally_encrypted_ballots(election_id: UUID, private_key_path: Path) -> 
             ).all()
         )
         for ballot in ballots:
-            slate_id = _decrypt_slate_id(ballot, private_key)
+            slate_id, nonce = _decrypt_ballot(ballot, private_key)
             if slate_id not in counts:
                 raise TallyError(f"Ballot {ballot.id} references an unknown slate")
+            if ballot.zkp_proof:
+                try:
+                    verify_proof_after_decrypt(
+                        zkp_proof=ballot.zkp_proof,
+                        slate_id=slate_id,
+                        nonce=nonce or "",
+                        encrypted_payload=ballot.encrypted_payload,
+                        require_integrity_proof=settings.zkp_verification_enabled,
+                    )
+                except BallotCryptoError as exc:
+                    raise TallyError(f"Ballot {ballot.id} ZKP failed: {exc}") from exc
             counts[slate_id] += 1
 
         eligible_member_count, voted_member_count = (
@@ -182,7 +219,7 @@ async def tally_encrypted_ballots(election_id: UUID, private_key_path: Path) -> 
                 for slate_id, count in counts.items()
             ],
         }
-        signature = sign_artifact(artifact, private_key)
+        signature = sign_artifact(artifact, signing_key)
         return {
             "artifact": artifact,
             "signature": signature,
@@ -199,19 +236,31 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--election-id", required=True, type=UUID)
     parser.add_argument("--private-key", required=True, type=Path)
+    parser.add_argument(
+        "--signing-key",
+        type=Path,
+        default=None,
+        help="Optional distinct RSA private key used to sign the tally artifact",
+    )
+    parser.add_argument("--out", type=Path, default=None)
     return parser.parse_args()
 
 
 async def _run() -> int:
     args = _parse_args()
     try:
-        result = await tally_encrypted_ballots(args.election_id, args.private_key)
+        result = await tally_encrypted_ballots(
+            args.election_id, args.private_key, args.signing_key
+        )
     except TallyError as exc:
         print(f"Tally failed: {exc}")
         return 1
     finally:
         await dispose_engine()
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    rendered = json.dumps(result, indent=2, ensure_ascii=False)
+    if args.out:
+        args.out.write_text(rendered, encoding="utf-8")
+    print(rendered)
     return 0
 
 

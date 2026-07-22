@@ -100,6 +100,7 @@ class Election(CreatedAtMixin, Base):
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="DRAFT")
     public_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signing_public_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -244,6 +245,8 @@ class AuditLog(CreatedAtMixin, Base):
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
     actor_id_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     details: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    entry_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class ElectionTally(CreatedAtMixin, Base):
@@ -272,4 +275,60 @@ class ElectionTally(CreatedAtMixin, Base):
     ballot_count: Mapped[int] = mapped_column(Integer, nullable=False)
     quorum_required: Mapped[int] = mapped_column(Integer, nullable=False)
     quorum_met: Mapped[bool] = mapped_column(nullable=False)
+    pilot_override: Mapped[bool] = mapped_column(nullable=False, default=False)
+    acta: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    first_approver_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    second_approver_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class BallotIssuanceToken(CreatedAtMixin, Base):
+    __tablename__ = "ballot_issuance_tokens"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_ballot_issuance_token_hash"),
+        Index("ix_ballot_issuance_election_member", "election_id", "member_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+    )
+    election_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("elections.id"),
+        nullable=False,
+    )
+    member_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("members.id"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ElectionTallyProposal(CreatedAtMixin, Base):
+    __tablename__ = "election_tally_proposals"
+    __table_args__ = (
+        UniqueConstraint("election_id", name="uq_election_tally_proposals_election"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+    )
+    election_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("elections.id"),
+        nullable=False,
+    )
+    artifact: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    signature: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    proposer_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str] = mapped_column(String(255), nullable=False)
     pilot_override: Mapped[bool] = mapped_column(nullable=False, default=False)

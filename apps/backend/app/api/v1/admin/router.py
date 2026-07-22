@@ -13,6 +13,7 @@ from fastapi import (
     Depends,
     File,
     Form,
+    Header,
     HTTPException,
     Query,
     Response,
@@ -35,6 +36,7 @@ from app.models import (
     Candidate,
     Election,
     ElectionTally,
+    ElectionTallyProposal,
     EncryptedBallot,
     Member,
     MemberElectionStatus,
@@ -42,6 +44,8 @@ from app.models import (
     Position,
     Slate,
 )
+from app.services.audit import append_audit_event
+from app.services.csrf import require_csrf
 from app.services.member_spreadsheet import (
     MAX_IMPORT_BYTES,
     MemberImportResult,
@@ -49,6 +53,7 @@ from app.services.member_spreadsheet import (
     import_members,
     parse_member_workbook,
 )
+from app.services.tally_acta import build_official_acta
 from app.services.tally_artifact import artifact_sha256, verify_artifact
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -164,28 +169,42 @@ class AdminElectionResponse(BaseModel):
     created_at: datetime
 
 
+def _validate_rsa_public_pem(value: str, field_name: str) -> str:
+    if "-----BEGIN PUBLIC KEY-----" not in value or "-----END PUBLIC KEY-----" not in value:
+        raise ValueError(f"{field_name} must be an RSA SubjectPublicKeyInfo PEM")
+    try:
+        public_key = load_pem_public_key(value.encode())
+    except ValueError as exc:
+        raise ValueError(f"{field_name} is not valid PEM key material") from exc
+    if not isinstance(public_key, RSAPublicKey):
+        raise ValueError(f"{field_name} must contain an RSA public key")
+    return value
+
+
 class AdminElectionActivationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     public_key: str = Field(min_length=16, max_length=8192)
+    signing_public_key: str | None = Field(default=None, min_length=16, max_length=8192)
 
-    @field_validator("public_key", mode="before")
+    @field_validator("public_key", "signing_public_key", mode="before")
     @classmethod
-    def normalize_public_key(cls, value: str) -> str:
+    def normalize_public_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return value.strip()
 
     @field_validator("public_key", mode="after")
     @classmethod
     def validate_public_key_pem(cls, value: str) -> str:
-        if "-----BEGIN PUBLIC KEY-----" not in value or "-----END PUBLIC KEY-----" not in value:
-            raise ValueError("public_key must be an RSA SubjectPublicKeyInfo PEM")
-        try:
-            public_key = load_pem_public_key(value.encode())
-        except ValueError as exc:
-            raise ValueError("public_key is not valid PEM key material") from exc
-        if not isinstance(public_key, RSAPublicKey):
-            raise ValueError("public_key must contain an RSA public key")
-        return value
+        return _validate_rsa_public_pem(value, "public_key")
+
+    @field_validator("signing_public_key", mode="after")
+    @classmethod
+    def validate_signing_public_key_pem(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _validate_rsa_public_pem(value, "signing_public_key")
 
 
 class AdminElectionActivationResponse(BaseModel):
@@ -273,12 +292,14 @@ class AdminTallyPublishRequest(BaseModel):
     signature: str = Field(min_length=32, max_length=8192)
     pilot_override: bool = False
     reason: str = Field(min_length=10, max_length=255)
+    approval_stage: Literal["propose", "confirm", "publish"] = "publish"
 
 
 class AdminTallyPublishResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    tally_id: UUID
+    tally_id: UUID | None = None
+    proposal_id: UUID | None = None
     election_id: UUID
     election_status: ElectionStatus
     artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -286,17 +307,21 @@ class AdminTallyPublishResponse(BaseModel):
     quorum_met: bool
     pilot_override: bool
     counts: list[AdminTallyCount]
-    published_at: datetime
+    published_at: datetime | None = None
+    approval_stage: Literal["propose", "confirm", "publish"]
+    acta_sha256: str | None = None
 
 
 class AdminElectionAuditResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: UUID
-    event_type: Literal["ELECTION_ACTIVATED", "ELECTION_CLOSED", "ELECTION_TALLIED"]
+    event_type: str
     actor_id_hash: str | None
     details: dict[str, Any]
     created_at: datetime
+    prev_hash: str | None = None
+    entry_hash: str | None = None
 
 
 class AdminElectionEligibilityResponse(BaseModel):
@@ -451,6 +476,23 @@ async def _require_member_manager(
             detail="Member management role required",
         )
     return claims
+
+
+async def _require_election_mutation(
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+) -> AccessClaims:
+    await require_csrf(session, claims, csrf_token, realm="ADMIN")
+    return claims
+
+
+def _actor_hash(principal_id: UUID) -> str:
+    return hashlib.sha256(str(principal_id).encode("utf-8")).hexdigest()
+
+
+def _signing_pem(election: Election) -> str:
+    return election.signing_public_key or election.public_key or ""
 
 
 async def _get_organization_election(
@@ -980,7 +1022,7 @@ async def activate_election(
     election_id: UUID,
     payload: AdminElectionActivationRequest,
     response: Response,
-    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    claims: Annotated[AccessClaims, Depends(_require_election_mutation)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> AdminElectionActivationResponse:
     """Open a frozen election after validating its immutable voting material."""
@@ -1114,25 +1156,40 @@ async def activate_election(
         )
 
     public_key = payload.public_key
+    signing_public_key = payload.signing_public_key or public_key
     public_key_sha256 = hashlib.sha256(public_key.encode("utf-8")).hexdigest()
+    signing_public_key_sha256 = hashlib.sha256(signing_public_key.encode("utf-8")).hexdigest()
     election.public_key = public_key
+    election.signing_public_key = signing_public_key
     election.activated_at = activation_time
     election.status = "ACTIVE"
-    session.add(
-        AuditLog(
-            organization_id=claims.org_id,
-            event_type="ELECTION_ACTIVATED",
-            actor_id_hash=hashlib.sha256(str(claims.sub).encode("utf-8")).hexdigest(),
-            details={
-                "election_id": str(election.id),
-                "snapshot_member_count": snapshot_member_count,
-                "eligible_member_count": eligible_member_count,
-                "position_count": len(positions),
-                "slate_count": len(slates),
-                "candidate_count": candidate_count,
-                "public_key_sha256": public_key_sha256,
-            },
-        )
+    await append_audit_event(
+        session,
+        organization_id=claims.org_id,
+        event_type="ELECTION_ACTIVATED",
+        actor_id_hash=_actor_hash(claims.sub),
+        details={
+            "election_id": str(election.id),
+            "snapshot_member_count": snapshot_member_count,
+            "eligible_member_count": eligible_member_count,
+            "position_count": len(positions),
+            "slate_count": len(slates),
+            "candidate_count": candidate_count,
+            "public_key_sha256": public_key_sha256,
+            "signing_public_key_sha256": signing_public_key_sha256,
+            "keys_separated": signing_public_key != public_key,
+        },
+    )
+    await append_audit_event(
+        session,
+        organization_id=claims.org_id,
+        event_type="KEY_CEREMONY_OPENED",
+        actor_id_hash=_actor_hash(claims.sub),
+        details={
+            "election_id": str(election.id),
+            "public_key_sha256": public_key_sha256,
+            "signing_public_key_sha256": signing_public_key_sha256,
+        },
     )
     await session.commit()
     return AdminElectionActivationResponse(
@@ -1200,7 +1257,7 @@ async def close_election(
     election_id: UUID,
     payload: AdminElectionCloseRequest,
     response: Response,
-    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    claims: Annotated[AccessClaims, Depends(_require_election_mutation)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> AdminElectionCloseResponse:
     """Close an election after quorum, or explicitly close the local pilot."""
@@ -1224,8 +1281,7 @@ async def close_election(
     quorum_required = _required_quorum_votes(eligible_count, election.quorum_threshold_pct)
     quorum_met = voted_count >= quorum_required
     pilot_override = payload.force_pilot
-    pilot_override_allowed = settings.environment == "development" and settings.voter_test_mode
-    if pilot_override and not pilot_override_allowed:
+    if pilot_override and not settings.pilot_overrides_allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Pilot closure is available only in development test mode",
@@ -1250,23 +1306,29 @@ async def close_election(
 
     closed_at = datetime.now(UTC)
     election.status = "CLOSED"
-    session.add(
-        AuditLog(
-            organization_id=claims.org_id,
-            event_type="ELECTION_CLOSED",
-            actor_id_hash=hashlib.sha256(str(claims.sub).encode("utf-8")).hexdigest(),
-            details={
-                "election_id": str(election.id),
-                "eligible_member_count": eligible_count,
-                "voted_member_count": voted_count,
-                "ballot_count": ballot_count,
-                "quorum_threshold_pct": str(election.quorum_threshold_pct),
-                "quorum_required": quorum_required,
-                "quorum_met": quorum_met,
-                "pilot_override": pilot_override,
-                "reason": payload.reason,
-            },
-        )
+    await append_audit_event(
+        session,
+        organization_id=claims.org_id,
+        event_type="ELECTION_CLOSED",
+        actor_id_hash=_actor_hash(claims.sub),
+        details={
+            "election_id": str(election.id),
+            "eligible_member_count": eligible_count,
+            "voted_member_count": voted_count,
+            "ballot_count": ballot_count,
+            "quorum_threshold_pct": str(election.quorum_threshold_pct),
+            "quorum_required": quorum_required,
+            "quorum_met": quorum_met,
+            "pilot_override": pilot_override,
+            "reason": payload.reason,
+        },
+    )
+    await append_audit_event(
+        session,
+        organization_id=claims.org_id,
+        event_type="KEY_CEREMONY_CLOSED",
+        actor_id_hash=_actor_hash(claims.sub),
+        details={"election_id": str(election.id), "pilot_override": pilot_override},
     )
     await session.commit()
     return AdminElectionCloseResponse(
@@ -1316,8 +1378,8 @@ async def get_tally_readiness(
         quorum_met=voted_count >= quorum_required,
         public_key_sha256=public_key_sha256,
         requires_offline_private_key=True,
-        zkp_verification_available=False,
-        can_mark_tallied=False,
+        zkp_verification_available=settings.zkp_verification_enabled,
+        can_mark_tallied=election.status == "CLOSED",
     )
 
 
@@ -1329,10 +1391,10 @@ async def publish_tally(
     election_id: UUID,
     payload: AdminTallyPublishRequest,
     response: Response,
-    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    claims: Annotated[AccessClaims, Depends(_require_election_mutation)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> AdminTallyPublishResponse:
-    """Verify an offline signed tally and persist only aggregate results."""
+    """Verify an offline signed tally; optionally require dual approval before TALLIED."""
     response.headers["Cache-Control"] = "no-store"
     election = await session.scalar(
         select(Election)
@@ -1346,9 +1408,7 @@ async def publish_tally(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only CLOSED elections can publish a tally",
         )
-    if payload.pilot_override and not (
-        settings.environment == "development" and settings.voter_test_mode
-    ):
+    if payload.pilot_override and not settings.pilot_overrides_allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Pilot tally publication is available only in development test mode",
@@ -1362,6 +1422,14 @@ async def publish_tally(
     try:
         artifact_model = AdminTallyArtifact.model_validate(payload.artifact)
     except ValueError as exc:
+        await append_audit_event(
+            session,
+            organization_id=claims.org_id,
+            event_type="TALLY_VERIFICATION_FAILED",
+            actor_id_hash=_actor_hash(claims.sub),
+            details={"election_id": str(election.id), "reason": "invalid_artifact"},
+        )
+        await session.commit()
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Invalid tally artifact",
@@ -1371,19 +1439,24 @@ async def publish_tally(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Tally artifact election does not match the requested election",
         )
-    if not election.public_key:
+    signing_pem = _signing_pem(election)
+    if not signing_pem:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Election public key is not configured",
         )
-    expected_public_key_hash = hashlib.sha256(election.public_key.encode("utf-8")).hexdigest()
-    if artifact_model.public_key_sha256 != expected_public_key_hash:
+    expected_public_key_hash = hashlib.sha256(signing_pem.encode("utf-8")).hexdigest()
+    # Prefer signing key hash; accept encryption key hash for lab ballots signed with same key.
+    allowed_hashes = {expected_public_key_hash}
+    if election.public_key:
+        allowed_hashes.add(hashlib.sha256(election.public_key.encode("utf-8")).hexdigest())
+    if artifact_model.public_key_sha256 not in allowed_hashes:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Tally artifact public key hash does not match the election",
         )
     try:
-        public_key = load_pem_public_key(election.public_key.encode("utf-8"))
+        public_key = load_pem_public_key(signing_pem.encode("utf-8"))
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1392,6 +1465,14 @@ async def publish_tally(
     if not isinstance(public_key, RSAPublicKey) or not verify_artifact(
         payload.artifact, payload.signature, public_key
     ):
+        await append_audit_event(
+            session,
+            organization_id=claims.org_id,
+            event_type="TALLY_VERIFICATION_FAILED",
+            actor_id_hash=_actor_hash(claims.sub),
+            details={"election_id": str(election.id), "reason": "invalid_signature"},
+        )
+        await session.commit()
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Tally artifact signature is invalid",
@@ -1466,11 +1547,103 @@ async def publish_tally(
             detail="Tally counts do not sum to the encrypted ballot count",
         )
 
+    sha = artifact_sha256(payload.artifact)
+    actor = _actor_hash(claims.sub)
+    dual_required = settings.require_dual_tally_approval and not payload.pilot_override
+    stage = payload.approval_stage
+    if dual_required and stage == "publish":
+        stage = "propose"
+
+    if dual_required and stage == "propose":
+        existing = await session.scalar(
+            select(ElectionTallyProposal).where(ElectionTallyProposal.election_id == election.id)
+        )
+        if existing is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A tally proposal already exists for this election",
+            )
+        proposal = ElectionTallyProposal(
+            organization_id=claims.org_id,
+            election_id=election.id,
+            artifact=payload.artifact,
+            signature=payload.signature,
+            artifact_sha256=sha,
+            proposer_hash=actor,
+            reason=payload.reason,
+            pilot_override=payload.pilot_override,
+        )
+        session.add(proposal)
+        await append_audit_event(
+            session,
+            organization_id=claims.org_id,
+            event_type="TALLY_PROPOSED",
+            actor_id_hash=actor,
+            details={
+                "election_id": str(election.id),
+                "artifact_sha256": sha,
+                "reason": payload.reason,
+            },
+        )
+        await session.commit()
+        return AdminTallyPublishResponse(
+            proposal_id=proposal.id,
+            election_id=election.id,
+            election_status=cast(ElectionStatus, election.status),
+            artifact_sha256=sha,
+            ballot_count=ballot_count,
+            quorum_met=quorum_met,
+            pilot_override=payload.pilot_override,
+            counts=artifact_model.counts,
+            approval_stage="propose",
+        )
+
+    first_approver = actor
+    second_approver: str | None = None
+    if dual_required and stage == "confirm":
+        proposal = await session.scalar(
+            select(ElectionTallyProposal)
+            .where(ElectionTallyProposal.election_id == election.id)
+            .with_for_update()
+        )
+        if proposal is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No tally proposal found; propose first",
+            )
+        if proposal.proposer_hash == actor:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Second approver must be a different administrator",
+            )
+        if (
+            proposal.artifact_sha256 != sha
+            or proposal.signature != payload.signature
+            or proposal.pilot_override != payload.pilot_override
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Confirm payload does not match the pending proposal",
+            )
+        first_approver = proposal.proposer_hash
+        second_approver = actor
+        await session.delete(proposal)
+
     published_at = datetime.now(UTC)
+    acta = build_official_acta(
+        artifact=payload.artifact,
+        signature=payload.signature,
+        artifact_sha256_hex=sha,
+        dual_approval={
+            "first_approver_hash": first_approver,
+            "second_approver_hash": second_approver,
+            "required": dual_required,
+        },
+    )
     tally = ElectionTally(
         organization_id=claims.org_id,
         election_id=election.id,
-        artifact_sha256=artifact_sha256(payload.artifact),
+        artifact_sha256=sha,
         signature=payload.signature,
         artifact=payload.artifact,
         eligible_member_count=eligible_count,
@@ -1479,24 +1652,28 @@ async def publish_tally(
         quorum_required=quorum_required,
         quorum_met=quorum_met,
         pilot_override=payload.pilot_override,
+        acta=acta,
+        first_approver_hash=first_approver,
+        second_approver_hash=second_approver,
     )
     session.add(tally)
     election.status = "TALLIED"
-    session.add(
-        AuditLog(
-            organization_id=claims.org_id,
-            event_type="ELECTION_TALLIED",
-            actor_id_hash=hashlib.sha256(str(claims.sub).encode("utf-8")).hexdigest(),
-            details={
-                "election_id": str(election.id),
-                "tally_id": str(tally.id),
-                "artifact_sha256": tally.artifact_sha256,
-                "ballot_count": ballot_count,
-                "quorum_met": quorum_met,
-                "pilot_override": payload.pilot_override,
-                "reason": payload.reason,
-            },
-        )
+    await append_audit_event(
+        session,
+        organization_id=claims.org_id,
+        event_type="ELECTION_TALLIED",
+        actor_id_hash=actor,
+        details={
+            "election_id": str(election.id),
+            "tally_id": str(tally.id),
+            "artifact_sha256": tally.artifact_sha256,
+            "ballot_count": ballot_count,
+            "quorum_met": quorum_met,
+            "pilot_override": payload.pilot_override,
+            "reason": payload.reason,
+            "acta_sha256": acta.get("acta_sha256"),
+            "dual_approval": dual_required,
+        },
     )
     try:
         await session.commit()
@@ -1516,6 +1693,8 @@ async def publish_tally(
         pilot_override=payload.pilot_override,
         counts=artifact_model.counts,
         published_at=published_at,
+        approval_stage="confirm" if dual_required else "publish",
+        acta_sha256=str(acta.get("acta_sha256")),
     )
 
 
@@ -1528,33 +1707,74 @@ async def list_election_audit(
     response: Response,
     claims: Annotated[AccessClaims, Depends(_require_election_manager)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
+    event_type: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
 ) -> list[AdminElectionAuditResponse]:
-    """Return tenant-scoped lifecycle and tally audit events without ballot or member data."""
+    """Return tenant-scoped audit events with pagination and optional type filter."""
     response.headers["Cache-Control"] = "no-store"
     election = await _get_organization_election(session, election_id, claims.org_id)
     statement = (
         select(AuditLog)
         .where(
             AuditLog.organization_id == claims.org_id,
-            AuditLog.event_type.in_(["ELECTION_ACTIVATED", "ELECTION_CLOSED", "ELECTION_TALLIED"]),
             AuditLog.details["election_id"].as_string() == str(election.id),
         )
         .order_by(AuditLog.created_at.asc())
+        .offset(offset)
+        .limit(limit)
     )
+    if event_type:
+        statement = statement.where(AuditLog.event_type == event_type)
     events = (await session.scalars(statement)).all()
     return [
         AdminElectionAuditResponse(
             id=event.id,
-            event_type=cast(
-                Literal["ELECTION_ACTIVATED", "ELECTION_CLOSED", "ELECTION_TALLIED"],
-                event.event_type,
-            ),
+            event_type=event.event_type,
             actor_id_hash=event.actor_id_hash,
             details=event.details or {},
             created_at=event.created_at,
+            prev_hash=event.prev_hash,
+            entry_hash=event.entry_hash,
         )
         for event in events
     ]
+
+
+@router.get("/elections/{election_id}/audit/export")
+async def export_election_audit(
+    election_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> Response:
+    """Export election audit events as JSON (append-only snapshot)."""
+    events = await list_election_audit(
+        election_id, response, claims, session, event_type=None, limit=1000, offset=0
+    )
+    body = [
+        {
+            "id": str(item.id),
+            "event_type": item.event_type,
+            "actor_id_hash": item.actor_id_hash,
+            "details": item.details,
+            "created_at": item.created_at.isoformat(),
+            "prev_hash": item.prev_hash,
+            "entry_hash": item.entry_hash,
+        }
+        for item in events
+    ]
+    import json
+
+    payload = json.dumps(body, ensure_ascii=False, indent=2).encode("utf-8")
+    return Response(
+        content=payload,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="audit-{election_id}.json"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get(

@@ -1,10 +1,10 @@
 import hashlib
-import hmac
-from datetime import UTC, datetime
+import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -15,7 +15,7 @@ from app.auth.tokens import AccessClaims
 from app.core.config import settings
 from app.db.session import get_db_session
 from app.models import (
-    AuthSession,
+    BallotIssuanceToken,
     Candidate,
     Election,
     EncryptedBallot,
@@ -24,6 +24,15 @@ from app.models import (
     Position,
     Slate,
 )
+from app.services.audit import append_audit_event
+from app.services.ballot_crypto import (
+    BallotCryptoError,
+    parse_encrypted_payload,
+    slate_set_hash,
+    verify_proof_at_cast,
+)
+from app.services.csrf import require_csrf
+from app.services.rate_limit import client_key, rate_limiter
 
 router = APIRouter(prefix="/voter", tags=["voter"])
 
@@ -68,8 +77,17 @@ class VoterElectionResponse(BaseModel):
     public_key: str
     key_version: str
     has_voted: bool
+    slate_set_hash: str
+    zkp_verification_enabled: bool
     positions: list[VoterPositionResponse]
     slates: list[VoterSlateResponse]
+
+
+class VoterIssuanceTokenResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    issuance_token: str
+    expires_at: datetime
 
 
 class VoterBallotRequest(BaseModel):
@@ -79,6 +97,7 @@ class VoterBallotRequest(BaseModel):
     receipt_hash: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
     zkp_proof: str = Field(min_length=16, max_length=65_536)
     key_version: str = Field(default="v1", min_length=1, max_length=50)
+    issuance_token: str | None = Field(default=None, min_length=16, max_length=256)
 
 
 class VoterBallotResponse(BaseModel):
@@ -88,6 +107,15 @@ class VoterBallotResponse(BaseModel):
     receipt_hash: str
     ballot_id: UUID
     recorded_at: datetime
+
+
+def _hash_issuance_token(token: str) -> str:
+    if not settings.jwt_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Voter authentication is not configured",
+        )
+    return hashlib.sha256(f"{settings.jwt_secret}:issuance:{token}".encode()).hexdigest()
 
 
 async def _get_active_election(
@@ -115,39 +143,6 @@ async def _get_active_election(
             detail="Election public key is not configured",
         )
     return election
-
-
-async def _require_voter_csrf(
-    session: AsyncSession,
-    claims: AccessClaims,
-    csrf_token: str | None,
-) -> None:
-    if not csrf_token:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="CSRF token required",
-        )
-    auth_session = await session.scalar(
-        select(AuthSession).where(
-            AuthSession.id == claims.session_id,
-            AuthSession.organization_id == claims.org_id,
-            AuthSession.principal_id == claims.sub,
-            AuthSession.realm == "VOTER",
-            AuthSession.revoked_at.is_(None),
-            AuthSession.expires_at > datetime.now(UTC),
-        )
-    )
-    if auth_session is None or not settings.jwt_secret:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Voter session is not active",
-        )
-    expected = hashlib.sha256(f"{settings.jwt_secret}:{csrf_token}".encode()).hexdigest()
-    if not hmac.compare_digest(expected, auth_session.csrf_token_hash):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid CSRF token",
-        )
 
 
 @router.get(
@@ -242,6 +237,8 @@ async def get_voter_election(
         public_key=public_key,
         key_version="v1",
         has_voted=eligibility.has_voted,
+        slate_set_hash=slate_set_hash([str(slate.id) for slate in slates]),
+        zkp_verification_enabled=settings.zkp_verification_enabled,
         positions=[VoterPositionResponse.model_validate(position) for position in positions],
         slates=[
             VoterSlateResponse(
@@ -256,6 +253,55 @@ async def get_voter_election(
 
 
 @router.post(
+    "/elections/{election_id}/issuance-token",
+    response_model=VoterIssuanceTokenResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def issue_ballot_token(
+    election_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(require_voter)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+) -> VoterIssuanceTokenResponse:
+    """Issue a single-use cast token decoupled from the ballot payload."""
+    response.headers["Cache-Control"] = "no-store"
+    await require_csrf(session, claims, csrf_token, realm="VOTER")
+    election = await _get_active_election(session, election_id, claims)
+    eligibility = await session.scalar(
+        select(MemberElectionStatus).where(
+            MemberElectionStatus.election_id == election.id,
+            MemberElectionStatus.organization_id == claims.org_id,
+            MemberElectionStatus.member_id == claims.sub,
+        )
+    )
+    if eligibility is None or not eligibility.eligible:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Voter is not eligible for this election",
+        )
+    if eligibility.has_voted:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Voter has already cast a ballot for this election",
+        )
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(UTC) + timedelta(minutes=10)
+    session.add(
+        BallotIssuanceToken(
+            id=uuid4(),
+            organization_id=claims.org_id,
+            election_id=election.id,
+            member_id=claims.sub,
+            token_hash=_hash_issuance_token(token),
+            expires_at=expires_at,
+        )
+    )
+    await session.commit()
+    return VoterIssuanceTokenResponse(issuance_token=token, expires_at=expires_at)
+
+
+@router.post(
     "/elections/{election_id}/ballots",
     response_model=VoterBallotResponse,
     status_code=status.HTTP_201_CREATED,
@@ -263,6 +309,7 @@ async def get_voter_election(
 async def cast_voter_ballot(
     election_id: UUID,
     payload: VoterBallotRequest,
+    request: Request,
     response: Response,
     claims: Annotated[AccessClaims, Depends(require_voter)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
@@ -270,27 +317,64 @@ async def cast_voter_ballot(
 ) -> VoterBallotResponse:
     """Record a client-encrypted ballot without storing a voter identifier on it."""
     response.headers["Cache-Control"] = "no-store"
-    if not settings.voter_test_mode:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Voter ballot test flow is disabled; configure the production "
-                "cryptographic ceremony"
-            ),
-        )
-    await _require_voter_csrf(session, claims, csrf_token)
+    rate_limiter.hit(
+        client_key(request, "voter-ballot"),
+        limit=settings.rate_limit_ballot_per_minute,
+        window_seconds=60,
+    )
+    await require_csrf(session, claims, csrf_token, realm="VOTER")
     election = await _get_active_election(session, election_id, claims)
     if payload.key_version != "v1":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Unsupported election key version",
         )
+    try:
+        parse_encrypted_payload(payload.encrypted_payload)
+    except BallotCryptoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
     expected_receipt = hashlib.sha256(payload.encrypted_payload.encode("utf-8")).hexdigest()
-    if not hmac.compare_digest(expected_receipt, payload.receipt_hash.lower()):
+    if expected_receipt != payload.receipt_hash.lower():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Receipt hash does not match encrypted payload",
         )
+
+    slates = list(
+        (
+            await session.scalars(
+                select(Slate).where(
+                    Slate.election_id == election.id,
+                    Slate.organization_id == claims.org_id,
+                )
+            )
+        ).all()
+    )
+    try:
+        verify_proof_at_cast(
+            encrypted_payload=payload.encrypted_payload,
+            zkp_proof=payload.zkp_proof,
+            slate_set_hash=slate_set_hash([str(s.id) for s in slates]),
+            require_integrity_proof=settings.zkp_verification_enabled,
+            allow_dev_stub=settings.pilot_overrides_allowed,
+        )
+    except BallotCryptoError as exc:
+        await append_audit_event(
+            session,
+            organization_id=claims.org_id,
+            event_type="BALLOT_ZKP_REJECTED",
+            actor_id_hash=hashlib.sha256(str(claims.sub).encode("utf-8")).hexdigest(),
+            details={"election_id": str(election.id), "reason": str(exc)},
+        )
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
     eligibility = await session.scalar(
         select(MemberElectionStatus)
@@ -312,6 +396,34 @@ async def cast_voter_ballot(
             detail="Voter has already cast a ballot for this election",
         )
 
+    if settings.ballot_issuance_required:
+        if not payload.issuance_token:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="issuance_token is required",
+            )
+        issuance = await session.scalar(
+            select(BallotIssuanceToken)
+            .where(
+                BallotIssuanceToken.token_hash == _hash_issuance_token(payload.issuance_token),
+                BallotIssuanceToken.election_id == election.id,
+                BallotIssuanceToken.member_id == claims.sub,
+                BallotIssuanceToken.organization_id == claims.org_id,
+            )
+            .with_for_update()
+        )
+        now = datetime.now(UTC)
+        if (
+            issuance is None
+            or issuance.consumed_at is not None
+            or issuance.expires_at <= now
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Invalid or consumed issuance token",
+            )
+        issuance.consumed_at = now
+
     recorded_at = datetime.now(UTC)
     ballot = EncryptedBallot(
         organization_id=claims.org_id,
@@ -324,6 +436,16 @@ async def cast_voter_ballot(
     session.add(ballot)
     eligibility.has_voted = True
     eligibility.voted_at = recorded_at
+    await append_audit_event(
+        session,
+        organization_id=claims.org_id,
+        event_type="BALLOT_CAST",
+        actor_id_hash=hashlib.sha256(str(claims.sub).encode("utf-8")).hexdigest(),
+        details={
+            "election_id": str(election.id),
+            "receipt_hash": ballot.receipt_hash,
+        },
+    )
     try:
         await session.commit()
     except IntegrityError as exc:

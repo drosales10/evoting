@@ -1,8 +1,9 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -12,6 +13,7 @@ from app.api.v1.public.router import router as public_router
 from app.api.v1.voter_router import router as voter_router
 from app.core.config import settings
 from app.db.session import dispose_engine, get_engine
+from app.middleware.logging import StructuredLoggingMiddleware
 
 
 @asynccontextmanager
@@ -22,11 +24,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.1.0",
-    description="Initial eVoting API with separated public, voter, party and admin surfaces.",
+    version="0.2.0",
+    description="eVoting API with separated public, voter and admin surfaces.",
     lifespan=lifespan,
 )
 
+app.add_middleware(StructuredLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -34,6 +37,17 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-CSRF-Token"],
 )
+
+
+@app.middleware("http")
+async def enforce_https(request: Request, call_next):  # type: ignore[no-untyped-def]
+    if settings.force_https_redirect:
+        proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+        if proto != "https":
+            url = request.url.replace(scheme="https")
+            return RedirectResponse(str(url), status_code=status.HTTP_308_PERMANENT_REDIRECT)
+    return await call_next(request)
+
 
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")

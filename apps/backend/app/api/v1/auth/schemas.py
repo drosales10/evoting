@@ -26,6 +26,7 @@ class AdminMfaEnrollmentResponse(BaseModel):
 class AdminLoginResponse(BaseModel):
     status: Literal["AUTHENTICATED", "MFA_REQUIRED"]
     mfa_required: bool
+    csrf_token: str | None = None
 
 
 class VoterOtpRequest(BaseModel):
@@ -49,8 +50,22 @@ class VoterLoginResponse(BaseModel):
     csrf_token: str
 
 
+class RefreshResponse(BaseModel):
+    status: Literal["AUTHENTICATED"]
+    realm: Literal["ADMIN", "VOTER"]
+    csrf_token: str
+
+
+class LogoutResponse(BaseModel):
+    status: Literal["LOGGED_OUT"]
+
+
 class AuthContractResponse(BaseModel):
     admin_login: str
+    admin_refresh: str
+    admin_logout: str
     voter_request_otp: str
     voter_verify_otp: str
+    voter_refresh: str
+    voter_logout: str
     note: str

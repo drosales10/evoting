@@ -15,6 +15,7 @@ from app.models import (
     AuthSession,
     Organization,
 )
+from app.services.csrf import hash_csrf_token
 
 
 @dataclass(frozen=True)
@@ -135,7 +136,7 @@ class AdminUserRepository:
             principal_id=user.id,
             realm="ADMIN",
             refresh_token_hash=sha256(refresh_token.encode("utf-8")).hexdigest(),
-            csrf_token_hash=sha256(csrf_token.encode("utf-8")).hexdigest(),
+            csrf_token_hash=hash_csrf_token(csrf_token),
             expires_at=now + timedelta(days=settings.refresh_token_days),
         )
         session.add(auth_session)

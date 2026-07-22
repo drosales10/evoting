@@ -71,14 +71,22 @@ export function RealmLoginForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(credentials),
       });
-      const payload = (await response.json()) as { status?: string; detail?: string };
+      const payload = (await response.json()) as {
+        status?: string;
+        detail?: string;
+        csrf_token?: string;
+      };
       if (!response.ok) {
         setMessage(payload.detail ?? "No fue posible iniciar sesión.");
       } else if (payload.status === "MFA_REQUIRED") {
         setMfaCredentials(credentials);
         setMessage("Credenciales correctas. Introduce el código de tu autenticador.");
       } else {
+        if (payload.csrf_token) {
+          window.sessionStorage.setItem("evoting_admin_csrf", payload.csrf_token);
+        }
         setMessage("Sesión administrativa iniciada.");
+        window.location.assign("/admin");
       }
     } catch {
       setMessage("No se pudo contactar la API de autenticación.");
@@ -137,11 +145,19 @@ export function RealmLoginForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...mfaCredentials, code: String(form.get("code") ?? "") }),
       });
-      const payload = (await response.json()) as { status?: string; detail?: string };
+      const payload = (await response.json()) as {
+        status?: string;
+        detail?: string;
+        csrf_token?: string;
+      };
       if (!response.ok) {
         setMessage(payload.detail ?? "El código MFA no es válido.");
       } else if (payload.status === "AUTHENTICATED") {
+        if (payload.csrf_token) {
+          window.sessionStorage.setItem("evoting_admin_csrf", payload.csrf_token);
+        }
         setMessage("Sesión administrativa iniciada.");
+        window.location.assign("/admin");
       }
     } catch {
       setMessage("No se pudo contactar la API de autenticación.");

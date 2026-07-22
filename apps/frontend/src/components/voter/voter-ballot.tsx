@@ -27,6 +27,8 @@ type VoterElection = {
   public_key: string;
   key_version: string;
   has_voted: boolean;
+  slate_set_hash: string;
+  zkp_verification_enabled: boolean;
   slates: VoterSlate[];
 };
 
@@ -37,8 +39,9 @@ type VoterBallotResponse = {
   recorded_at: string;
 };
 
-function toBase64(value: ArrayBuffer): string {
-  return btoa(String.fromCharCode(...new Uint8Array(value)))
+function toBase64(value: ArrayBuffer | Uint8Array): string {
+  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+  return btoa(String.fromCharCode(...bytes))
     .replaceAll("+", "-")
     .replaceAll("/", "_")
     .replaceAll("=", "");
@@ -48,10 +51,32 @@ function toHex(value: ArrayBuffer): string {
   return Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return toHex(digest);
+}
+
+async function buildIntegrityProof(
+  encryptedPayload: string,
+  slateId: string,
+  nonce: string,
+  slateSetHash: string,
+): Promise<string> {
+  const commitment = await sha256Hex(`${slateId}:${nonce}`);
+  const payloadBinding = await sha256Hex(`${encryptedPayload}:${commitment}`);
+  const proof = JSON.stringify({
+    version: "ballot-integrity-v1",
+    commitment,
+    payload_binding: payloadBinding,
+    slate_set_hash: slateSetHash,
+  });
+  return toBase64(new TextEncoder().encode(proof));
+}
+
 async function encryptSelection(
   election: VoterElection,
   slateId: string,
-): Promise<{ encryptedPayload: string; receiptHash: string }> {
+): Promise<{ encryptedPayload: string; receiptHash: string; nonce: string }> {
   const publicKeyData = election.public_key
     .replace("-----BEGIN PUBLIC KEY-----", "")
     .replace("-----END PUBLIC KEY-----", "")
@@ -70,7 +95,9 @@ async function encryptSelection(
     ["encrypt"],
   );
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = new TextEncoder().encode(JSON.stringify({ slate_id: slateId }));
+  const nonceBytes = crypto.getRandomValues(new Uint8Array(16));
+  const nonce = toHex(nonceBytes.buffer);
+  const plaintext = new TextEncoder().encode(JSON.stringify({ slate_id: slateId, nonce }));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aesKey, plaintext);
   const rawAesKey = await crypto.subtle.exportKey("raw", aesKey);
   const wrappedKey = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawAesKey);
@@ -88,6 +115,7 @@ async function encryptSelection(
   return {
     encryptedPayload,
     receiptHash: toHex(digest),
+    nonce,
   };
 }
 
@@ -142,6 +170,30 @@ export function VoterBallot() {
         return;
       }
       const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const issuanceResponse = await fetch(
+        `${apiUrl}/api/v1/voter/elections/${election.election_id}/issuance-token`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "X-CSRF-Token": csrfToken },
+        },
+      );
+      const issuancePayload = (await issuanceResponse.json()) as {
+        issuance_token?: string;
+        detail?: string;
+      };
+      if (!issuanceResponse.ok || !issuancePayload.issuance_token) {
+        setMessage(issuancePayload.detail ?? "No se pudo emitir el token de un solo uso.");
+        return;
+      }
+      const zkpProof = election.zkp_verification_enabled
+        ? await buildIntegrityProof(
+            encrypted.encryptedPayload,
+            selectedSlate,
+            encrypted.nonce,
+            election.slate_set_hash,
+          )
+        : `development-pilot-proof-${encrypted.receiptHash}`;
       const response = await fetch(`${apiUrl}/api/v1/voter/elections/${election.election_id}/ballots`, {
         method: "POST",
         credentials: "include",
@@ -152,8 +204,9 @@ export function VoterBallot() {
         body: JSON.stringify({
           encrypted_payload: encrypted.encryptedPayload,
           receipt_hash: encrypted.receiptHash,
-          zkp_proof: `development-pilot-proof-${encrypted.receiptHash}`,
+          zkp_proof: zkpProof,
           key_version: election.key_version,
+          issuance_token: issuancePayload.issuance_token,
         }),
       });
       const payload = (await response.json()) as VoterBallotResponse & { detail?: string };
@@ -173,11 +226,11 @@ export function VoterBallot() {
 
   return (
     <section className="empty-state" aria-labelledby="voter-ballot-title">
-      <span className="eyebrow">Piloto VOTER local</span>
-      <h2 id="voter-ballot-title">Emitir voto de prueba</h2>
+      <span className="eyebrow">Emisión VOTER</span>
+      <h2 id="voter-ballot-title">Emitir voto cifrado</h2>
       <p>
-        Esta pantalla requiere una sesión VOTER activa. El payload se cifra en el navegador y no incluye
-        identidad; el backend enlaza la participación únicamente en MemberElectionStatus.
+        El payload se cifra en el navegador y no incluye identidad. Se usa un token de emisión de un
+        solo uso y prueba de integridad ballot-integrity-v1 cuando ZKP está habilitado.
       </p>
       {!sessionChecked ? (
         <p className="form-message">Comprobando la sesión del elector…</p>
@@ -215,7 +268,7 @@ export function VoterBallot() {
                     ))}
                   </select>
                   <button className="button button-primary" type="button" onClick={() => void castBallot()} disabled={busy || !selectedSlate}>
-                    {busy ? "Cifrando…" : "Emitir voto de prueba"}
+                    {busy ? "Cifrando…" : "Emitir voto"}
                   </button>
                 </>
               )}

@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: evoting
+      POSTGRES_PASSWORD: evoting
+      POSTGRES_DB: evoting
+    ports:
+      - "5432:5432"
+    volumes:
+      - evoting_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evoting -d evoting"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://evoting:evoting@db:5432/evoting
+      CORS_ORIGINS: '["http://localhost:3000"]'
+      JWT_SECRET: local-dev-change-me-please-32chars
+      MFA_ENCRYPTION_KEY: dGVzdC1tZmEtZW5jcnlwdGlvbi1rZXktMzJieXRlcw==
+      ENVIRONMENT: development
+      SECURE_COOKIES: "false"
+      FORCE_HTTPS_REDIRECT: "false"
+      VOTER_TEST_MODE: "true"
+      VOTER_TEST_CODE: "123456"
+      ZKP_VERIFICATION_ENABLED: "false"
+      REQUIRE_DUAL_TALLY_APPROVAL: "false"
+      BALLOT_ISSUANCE_REQUIRED: "true"
+      APP_PUBLIC_URL: http://localhost:3000
+      ADMIN_MFA_REQUIRED: "false"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  evoting_pg:
