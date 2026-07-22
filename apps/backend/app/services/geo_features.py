@@ -143,14 +143,10 @@ async def build_public_results_collection(
     session: AsyncSession,
     election: Election,
 ) -> dict[str, Any]:
-    """Aggregate participation by state (N3) for choropleth-style client map."""
+    """Aggregate participation by N2–N5 for choropleth-style client map."""
     features: list[dict[str, Any]] = []
-    states = (
-        await session.scalars(
-            select(ElectoralState).where(ElectoralState.organization_id == election.organization_id)
-        )
-    ).all()
-    for state in states:
+
+    async def _counts_for(member_attr: str, unit_id: UUID) -> tuple[int, int]:
         voted = int(
             (
                 await session.execute(
@@ -159,7 +155,7 @@ async def build_public_results_collection(
                     .where(
                         MemberElectionStatus.election_id == election.id,
                         MemberElectionStatus.has_voted.is_(True),
-                        Member.state_id == state.id,
+                        getattr(Member, member_attr) == unit_id,
                     )
                 )
             ).scalar_one()
@@ -172,11 +168,63 @@ async def build_public_results_collection(
                     .where(
                         MemberElectionStatus.election_id == election.id,
                         MemberElectionStatus.eligible.is_(True),
-                        Member.state_id == state.id,
+                        getattr(Member, member_attr) == unit_id,
                     )
                 )
             ).scalar_one()
         )
+        return voted, eligible
+
+    org = await session.scalar(
+        select(Organization).where(Organization.id == election.organization_id)
+    )
+    if org:
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": None,
+                "properties": {
+                    "level": "N1",
+                    "id": str(org.id),
+                    "code": org.slug,
+                    "name": org.name,
+                    "election_id": str(election.id),
+                },
+            }
+        )
+
+    regions = (
+        await session.scalars(
+            select(ElectoralRegion).where(
+                ElectoralRegion.organization_id == election.organization_id
+            )
+        )
+    ).all()
+    for region in regions:
+        voted, eligible = await _counts_for("region_id", region.id)
+        feat = _feature(
+            "N2",
+            region.id,
+            region.name,
+            region.code,
+            region.geojson,
+            {
+                "voted_count": voted,
+                "eligible_count": eligible,
+                "participation_pct": round((voted / eligible) * 100, 2) if eligible else 0,
+                "election_id": str(election.id),
+            },
+        )
+        if feat:
+            features.append(feat)
+
+    states = (
+        await session.scalars(
+            select(ElectoralState).where(ElectoralState.organization_id == election.organization_id)
+        )
+    ).all()
+    for state in states:
+        voted, eligible = await _counts_for("state_id", state.id)
         feat = _feature(
             "N3",
             state.id,
@@ -193,46 +241,46 @@ async def build_public_results_collection(
         if feat:
             features.append(feat)
 
-    regions = (
+    municipalities = (
         await session.scalars(
-            select(ElectoralRegion).where(
-                ElectoralRegion.organization_id == election.organization_id
+            select(ElectoralMunicipality).where(
+                ElectoralMunicipality.organization_id == election.organization_id
             )
         )
     ).all()
-    for region in regions:
-        voted = int(
-            (
-                await session.execute(
-                    select(func.count(MemberElectionStatus.id))
-                    .join(Member, Member.id == MemberElectionStatus.member_id)
-                    .where(
-                        MemberElectionStatus.election_id == election.id,
-                        MemberElectionStatus.has_voted.is_(True),
-                        Member.region_id == region.id,
-                    )
-                )
-            ).scalar_one()
-        )
-        eligible = int(
-            (
-                await session.execute(
-                    select(func.count(MemberElectionStatus.id))
-                    .join(Member, Member.id == MemberElectionStatus.member_id)
-                    .where(
-                        MemberElectionStatus.election_id == election.id,
-                        MemberElectionStatus.eligible.is_(True),
-                        Member.region_id == region.id,
-                    )
-                )
-            ).scalar_one()
-        )
+    for muni in municipalities:
+        voted, eligible = await _counts_for("municipality_id", muni.id)
         feat = _feature(
-            "N2",
-            region.id,
-            region.name,
-            region.code,
-            region.geojson,
+            "N4",
+            muni.id,
+            muni.name,
+            muni.code,
+            muni.geojson,
+            {
+                "voted_count": voted,
+                "eligible_count": eligible,
+                "participation_pct": round((voted / eligible) * 100, 2) if eligible else 0,
+                "election_id": str(election.id),
+            },
+        )
+        if feat:
+            features.append(feat)
+
+    places = (
+        await session.scalars(
+            select(ElectoralPollingPlace).where(
+                ElectoralPollingPlace.organization_id == election.organization_id
+            )
+        )
+    ).all()
+    for place in places:
+        voted, eligible = await _counts_for("polling_place_id", place.id)
+        feat = _feature(
+            "N5",
+            place.id,
+            place.name,
+            place.code,
+            place.geojson,
             {
                 "voted_count": voted,
                 "eligible_count": eligible,

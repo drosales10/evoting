@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ElectoralRegion, Member
+from app.models import ElectoralRegion, ElectoralState, Member
 
 EXCEL_SHEET_NAME = "Datos"
 EXCEL_HEADERS = (
@@ -238,6 +238,7 @@ def _member_values(
     member: ParsedMember,
     *,
     region_id: UUID | None = None,
+    state_id: UUID | None = None,
 ) -> dict[str, Any]:
     return {
         "registry_code": member.registry_code,
@@ -259,6 +260,7 @@ def _member_values(
         "graduation_date": member.graduation_date,
         "photo_filename": member.photo_filename,
         "region_id": region_id,
+        "state_id": state_id,
     }
 
 
@@ -275,14 +277,27 @@ async def import_members(
             select(ElectoralRegion).where(ElectoralRegion.organization_id == organization_id)
         )
     ).all()
+    states = (
+        await session.scalars(
+            select(ElectoralState).where(ElectoralState.organization_id == organization_id)
+        )
+    ).all()
     region_by_code = {r.code.strip().upper(): r.id for r in regions}
     region_by_name = {r.name.strip().upper(): r.id for r in regions}
+    state_by_code = {s.code.strip().upper(): s for s in states}
+    state_by_name = {s.name.strip().upper(): s for s in states}
 
     def resolve_region_id(label: str | None) -> UUID | None:
         if not label:
             return None
         key = label.strip().upper()
         return region_by_code.get(key) or region_by_name.get(key)
+
+    def resolve_state(label: str | None) -> ElectoralState | None:
+        if not label:
+            return None
+        key = label.strip().upper()
+        return state_by_code.get(key) or state_by_name.get(key)
 
     result = MemberImportResult(rows_read=rows_read, errors=list(errors))
     for parsed in members:
@@ -311,18 +326,22 @@ async def import_members(
             created_this = False
             updated_this = False
             region_id = resolve_region_id(parsed.region)
+            state = resolve_state(parsed.section)
+            state_id = state.id if state else None
+            if state is not None and region_id is None:
+                region_id = state.region_id
             async with session.begin_nested():
                 if existing is None:
                     session.add(
                         Member(
                             organization_id=organization_id,
-                            **_member_values(parsed, region_id=region_id),
+                            **_member_values(parsed, region_id=region_id, state_id=state_id),
                         )
                     )
                     result.created += 1
                     created_this = True
                 else:
-                    values = _member_values(parsed, region_id=region_id)
+                    values = _member_values(parsed, region_id=region_id, state_id=state_id)
                     if values["photo_filename"] is None and existing.photo_data:
                         values.pop("photo_filename")
                     for field, value in values.items():

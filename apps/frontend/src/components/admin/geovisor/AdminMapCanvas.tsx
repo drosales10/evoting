@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo } from "react";
 import L from "leaflet";
-import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
-import type { FeatureCollection } from "geojson";
+import { MapContainer, TileLayer, GeoJSON, CircleMarker, Popup, useMap } from "react-leaflet";
+import type { FeatureCollection, Feature } from "geojson";
 import "leaflet/dist/leaflet.css";
 
 function FitBounds({ data }: { data: FeatureCollection | null }) {
@@ -14,7 +14,15 @@ function FitBounds({ data }: { data: FeatureCollection | null }) {
       return;
     }
     try {
-      const layer = L.geoJSON(data as never);
+      const withGeom = {
+        type: "FeatureCollection" as const,
+        features: data.features.filter((f) => f.geometry),
+      };
+      if (!withGeom.features.length) {
+        map.setView([8.0, -66.0], 6);
+        return;
+      }
+      const layer = L.geoJSON(withGeom as never);
       const bounds = layer.getBounds();
       if (bounds.isValid()) map.fitBounds(bounds.pad(0.15));
       else map.setView([8.0, -66.0], 6);
@@ -25,17 +33,28 @@ function FitBounds({ data }: { data: FeatureCollection | null }) {
   return null;
 }
 
+const LEVEL_COLORS: Record<string, string> = {
+  N1: "#0f3d31",
+  N2: "#1a5f4a",
+  N3: "#2a7a5f",
+  N4: "#3d9a78",
+  N5: "#5bb892",
+};
+
 export function AdminMapCanvas({
   data,
 }: {
   data: FeatureCollection | null;
 }) {
-  const filtered = useMemo(() => {
-    if (!data) return null;
-    return {
-      ...data,
-      features: data.features.filter((f) => f.geometry),
-    } as FeatureCollection;
+  const { polygons, points } = useMemo(() => {
+    const polys: FeatureCollection = { type: "FeatureCollection", features: [] };
+    const pts: Feature[] = [];
+    if (!data) return { polygons: null, points: pts };
+    for (const feature of data.features) {
+      if (feature.geometry) polys.features.push(feature);
+      else pts.push(feature);
+    }
+    return { polygons: polys.features.length ? polys : null, points: pts };
   }, [data]);
 
   return (
@@ -44,20 +63,14 @@ export function AdminMapCanvas({
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      {filtered ? (
+      {polygons ? (
         <GeoJSON
-          key={JSON.stringify(filtered.features.map((f) => f.properties))}
-          data={filtered}
+          key={JSON.stringify(polygons.features.map((f) => f.properties))}
+          data={polygons}
           style={(feature) => {
             const level = String(feature?.properties?.level ?? "N2");
-            const colors: Record<string, string> = {
-              N2: "#1a5f4a",
-              N3: "#2a7a5f",
-              N4: "#3d9a78",
-              N5: "#5bb892",
-            };
             return {
-              color: colors[level] ?? "#1a5f4a",
+              color: LEVEL_COLORS[level] ?? "#1a5f4a",
               weight: 2,
               fillOpacity: 0.25,
             };
@@ -69,7 +82,30 @@ export function AdminMapCanvas({
           }}
         />
       ) : null}
-      <FitBounds data={filtered} />
+      {points.map((feature, index) => {
+        const level = String(feature.properties?.level ?? "N1");
+        const lat = 8 + (index % 5) * 0.4;
+        const lng = -66 - Math.floor(index / 5) * 0.4;
+        return (
+          <CircleMarker
+            key={`${String(feature.properties?.id ?? index)}-${level}`}
+            center={[lat, lng]}
+            radius={8}
+            pathOptions={{
+              color: LEVEL_COLORS[level] ?? "#1a5f4a",
+              fillColor: LEVEL_COLORS[level] ?? "#1a5f4a",
+              fillOpacity: 0.7,
+            }}
+          >
+            <Popup>
+              <strong>{String(feature.properties?.name ?? "")}</strong>
+              <br />
+              Nivel {level} (sin geometría)
+            </Popup>
+          </CircleMarker>
+        );
+      })}
+      <FitBounds data={data} />
     </MapContainer>
   );
 }

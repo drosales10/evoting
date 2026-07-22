@@ -21,6 +21,9 @@ export function ClientExperienceShell({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
+    return () => {
+      document.documentElement.classList.remove("dark");
+    };
   }, [dark]);
 
   return (

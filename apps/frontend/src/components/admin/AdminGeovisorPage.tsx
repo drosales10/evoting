@@ -21,6 +21,8 @@ export function AdminGeovisorPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [regions, setRegions] = useState<TerritoryUnit[]>([]);
   const [states, setStates] = useState<TerritoryUnit[]>([]);
+  const [municipalities, setMunicipalities] = useState<TerritoryUnit[]>([]);
+  const [pollingPlaces, setPollingPlaces] = useState<TerritoryUnit[]>([]);
   const [importTarget, setImportTarget] = useState({ level: "N2", id: "" });
 
   const load = useCallback(async () => {
@@ -44,10 +46,14 @@ export function AdminGeovisorPage() {
     void Promise.all([
       fetch(`${apiUrl()}/api/v1/admin/territory/regions`, { credentials: "include" }),
       fetch(`${apiUrl()}/api/v1/admin/territory/states`, { credentials: "include" }),
+      fetch(`${apiUrl()}/api/v1/admin/territory/municipalities`, { credentials: "include" }),
+      fetch(`${apiUrl()}/api/v1/admin/territory/polling-places`, { credentials: "include" }),
     ])
-      .then(async ([rRes, sRes]) => {
+      .then(async ([rRes, sRes, mRes, pRes]) => {
         if (rRes.ok) setRegions((await rRes.json()) as TerritoryUnit[]);
         if (sRes.ok) setStates((await sRes.json()) as TerritoryUnit[]);
+        if (mRes.ok) setMunicipalities((await mRes.json()) as TerritoryUnit[]);
+        if (pRes.ok) setPollingPlaces((await pRes.json()) as TerritoryUnit[]);
       })
       .catch(() => undefined);
   }, []);
@@ -126,13 +132,19 @@ export function AdminGeovisorPage() {
               onChange={(e) => setImportTarget({ ...importTarget, id: e.target.value })}
             >
               <option value="">Seleccionar…</option>
-              {(importTarget.level === "N2" ? regions : importTarget.level === "N3" ? states : []).map(
-                (unit) => (
-                  <option key={unit.id} value={unit.id}>
-                    {unit.name} ({unit.code})
-                  </option>
-                ),
-              )}
+              {(
+                importTarget.level === "N2"
+                  ? regions
+                  : importTarget.level === "N3"
+                    ? states
+                    : importTarget.level === "N4"
+                      ? municipalities
+                      : pollingPlaces
+              ).map((unit) => (
+                <option key={unit.id} value={unit.id}>
+                  {unit.name} ({unit.code})
+                </option>
+              ))}
             </select>
           </label>
           <label className="btn btn-secondary cursor-pointer">

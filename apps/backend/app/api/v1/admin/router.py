@@ -1071,9 +1071,37 @@ async def open_election_registration(
 
     members_query = select(Member).where(Member.organization_id == claims.org_id)
     if election.scope_level == "REGIONAL" and election.region_id:
-        members_query = members_query.where(Member.region_id == election.region_id)
+        region = await session.scalar(
+            select(ElectoralRegion).where(
+                ElectoralRegion.id == election.region_id,
+                ElectoralRegion.organization_id == claims.org_id,
+            )
+        )
+        region_labels = {
+            value.strip().upper()
+            for value in ((region.code if region else None), (region.name if region else None))
+            if value
+        }
+        scope_filters = [Member.region_id == election.region_id]
+        if region_labels:
+            scope_filters.append(func.upper(func.trim(Member.region)).in_(region_labels))
+        members_query = members_query.where(or_(*scope_filters))
     elif election.scope_level == "STATE" and election.state_id:
-        members_query = members_query.where(Member.state_id == election.state_id)
+        state = await session.scalar(
+            select(ElectoralState).where(
+                ElectoralState.id == election.state_id,
+                ElectoralState.organization_id == claims.org_id,
+            )
+        )
+        state_labels = {
+            value.strip().upper()
+            for value in ((state.code if state else None), (state.name if state else None))
+            if value
+        }
+        scope_filters = [Member.state_id == election.state_id]
+        if state_labels:
+            scope_filters.append(func.upper(func.trim(Member.section)).in_(state_labels))
+        members_query = members_query.where(or_(*scope_filters))
     members = await session.scalars(members_query)
     for member in members:
         member_eligible = member.status == "ACTIVE" and member.alive is True

@@ -24,8 +24,8 @@ El archivo de referencia es `docs/Padron_Administrativo.xlsx`, hoja `Datos`. La 
 | `Sem` | `semester` | Texto opcional, por ejemplo `U`, `B` o `A`. |
 | `Sexo` | `sex` | Texto opcional. |
 | `Vivo` | `alive` | `1`/`true`/`sí` → `true`; `0`/`false`/`no` → `false`; vacío → `null`. |
-| `Región` | `region` (+ `region_id` si el código coincide) | Texto opcional (N2). Si el valor coincide con `electoral_regions.code` de la organización, también se asigna la FK. |
-| `Seccional` | `section` | Texto opcional (legado / N3 textual). |
+| `Región` | `region` (+ `region_id` si el código/nombre coincide) | Texto opcional (N2). Si coincide con `electoral_regions.code` o `name`, asigna FK. |
+| `Seccional` | `section` (+ `state_id` si coincide) | Texto opcional (N3). Si coincide con `electoral_states.code` o `name`, asigna FK y, si falta, hereda `region_id`. |
 | `Ubicación` | `location` | Texto opcional. |
 | `Mención` | `mention` | Texto opcional. |
 | `Fecha Grado` | `graduation_date` | Fecha; acepta `YYYY-MM-DD`, `DD/MM/YYYY`, `DD-MM-YYYY` y `MM/DD/YYYY`. |

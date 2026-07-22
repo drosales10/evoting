@@ -88,4 +88,74 @@
   .card-panel {
     @apply rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5;
   }
+
+  /* Compat: pantallas legacy (login, voto, overview) */
+  .page-shell {
+    @apply mx-auto min-h-screen max-w-5xl px-4 py-8 md:px-6;
+  }
+  .auth-card {
+    @apply mx-auto max-w-md rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-6 shadow-sm;
+  }
+  .auth-form {
+    @apply mt-4 flex flex-col gap-3;
+  }
+  .auth-form label {
+    @apply text-sm font-bold text-[var(--ink)];
+  }
+  .auth-form input:not([type="checkbox"]):not([type="file"]),
+  .auth-form select,
+  .auth-form textarea {
+    @apply input-field;
+  }
+  .button {
+    @apply btn cursor-pointer;
+  }
+  .button-primary {
+    @apply btn-primary;
+  }
+  .button-secondary {
+    @apply btn-secondary;
+  }
+  .inline-button {
+    @apply inline-flex;
+  }
+  .eyebrow {
+    @apply text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--primary)];
+  }
+  .lead {
+    @apply text-[var(--muted)];
+  }
+  .back-link {
+    @apply text-sm font-semibold text-[var(--primary)] hover:underline;
+  }
+  .notice {
+    @apply rounded-xl border border-[var(--line)] bg-[var(--accent)]/40 px-4 py-3 text-sm;
+  }
+  .form-message {
+    @apply mt-3 text-sm text-[var(--muted)];
+  }
+  .surface-grid {
+    @apply my-4 grid gap-3 sm:grid-cols-3;
+  }
+  .surface-card {
+    @apply card-panel;
+  }
+  .empty-state {
+    @apply my-6 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] p-5;
+  }
+  .election-list {
+    @apply mt-4 flex flex-col gap-3;
+  }
+  .election-item {
+    @apply flex flex-wrap items-start justify-between gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4;
+  }
+  .hero-actions {
+    @apply mt-3 flex flex-wrap gap-2;
+  }
+  .card-link {
+    @apply text-sm font-semibold text-[var(--primary)] underline;
+  }
+  .site-header {
+    @apply border-b border-[var(--line)] bg-[var(--surface)];
+  }
 }
