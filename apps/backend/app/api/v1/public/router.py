@@ -1,7 +1,9 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
@@ -11,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db_session
 from app.models import Election, ElectionTally
 from app.repositories.elections import PublicElectionRepository
+from app.services.tally_artifact import artifact_sha256, verify_artifact
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -34,6 +37,30 @@ class PublicTallyCount(BaseModel):
     votes: int
 
 
+class PublicTallyArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_version: Literal["pilot-tally-v1"]
+    election_id: UUID
+    public_key_sha256: str
+    generated_at: datetime
+    eligible_member_count: int
+    voted_member_count: int
+    quorum_threshold_pct: str
+    quorum_required: int
+    quorum_met: bool
+    ballot_count: int
+    receipt_hashes: list[str]
+    counts: list[PublicTallyCount]
+
+
+class PublicTallyVerification(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_sha256_matches: bool
+    signature_valid: bool
+
+
 class PublicElectionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -42,6 +69,12 @@ class PublicElectionResult(BaseModel):
     voting_type: str
     ballot_count: int
     published_at: datetime
+    artifact_sha256: str
+    public_key_sha256: str
+    artifact: PublicTallyArtifact
+    signature: str
+    public_key: str
+    verification: PublicTallyVerification
     counts: list[PublicTallyCount]
 
 
@@ -70,14 +103,43 @@ async def get_public_election_results(
             detail="Published election results not found",
         )
     election, tally = result
-    artifact_counts = tally.artifact.get("counts", [])
+    try:
+        artifact_model = PublicTallyArtifact.model_validate(tally.artifact)
+        stored_artifact_sha256 = artifact_sha256(tally.artifact)
+        public_key = load_pem_public_key(election.public_key.encode("utf-8"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Published election result verification is unavailable",
+        ) from exc
+    if not isinstance(public_key, RSAPublicKey):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Published election result verification is unavailable",
+        )
+    hash_matches = stored_artifact_sha256 == tally.artifact_sha256
+    signature_valid = hash_matches and verify_artifact(tally.artifact, tally.signature, public_key)
+    if not signature_valid or artifact_model.election_id != election.id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Published election result verification failed",
+        )
     return PublicElectionResult(
         election_id=election.id,
         title=election.title,
         voting_type=election.voting_type,
         ballot_count=tally.ballot_count,
         published_at=tally.created_at,
-        counts=[PublicTallyCount.model_validate(count) for count in artifact_counts],
+        artifact_sha256=tally.artifact_sha256,
+        public_key_sha256=artifact_model.public_key_sha256,
+        artifact=artifact_model,
+        signature=tally.signature,
+        public_key=election.public_key,
+        verification=PublicTallyVerification(
+            artifact_sha256_matches=hash_matches,
+            signature_valid=signature_valid,
+        ),
+        counts=artifact_model.counts,
     )
 
 

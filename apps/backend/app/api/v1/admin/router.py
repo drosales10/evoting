@@ -289,6 +289,16 @@ class AdminTallyPublishResponse(BaseModel):
     published_at: datetime
 
 
+class AdminElectionAuditResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    event_type: Literal["ELECTION_ACTIVATED", "ELECTION_CLOSED", "ELECTION_TALLIED"]
+    actor_id_hash: str | None
+    details: dict[str, Any]
+    created_at: datetime
+
+
 class AdminElectionEligibilityResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1507,6 +1517,44 @@ async def publish_tally(
         counts=artifact_model.counts,
         published_at=published_at,
     )
+
+
+@router.get(
+    "/elections/{election_id}/audit",
+    response_model=list[AdminElectionAuditResponse],
+)
+async def list_election_audit(
+    election_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> list[AdminElectionAuditResponse]:
+    """Return tenant-scoped lifecycle and tally audit events without ballot or member data."""
+    response.headers["Cache-Control"] = "no-store"
+    election = await _get_organization_election(session, election_id, claims.org_id)
+    statement = (
+        select(AuditLog)
+        .where(
+            AuditLog.organization_id == claims.org_id,
+            AuditLog.event_type.in_(["ELECTION_ACTIVATED", "ELECTION_CLOSED", "ELECTION_TALLIED"]),
+            AuditLog.details["election_id"].as_string() == str(election.id),
+        )
+        .order_by(AuditLog.created_at.asc())
+    )
+    events = (await session.scalars(statement)).all()
+    return [
+        AdminElectionAuditResponse(
+            id=event.id,
+            event_type=cast(
+                Literal["ELECTION_ACTIVATED", "ELECTION_CLOSED", "ELECTION_TALLIED"],
+                event.event_type,
+            ),
+            actor_id_hash=event.actor_id_hash,
+            details=event.details or {},
+            created_at=event.created_at,
+        )
+        for event in events
+    ]
 
 
 @router.get(

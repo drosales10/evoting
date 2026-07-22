@@ -92,6 +92,14 @@ type AdminTallyPublishResponse = {
   published_at: string;
 };
 
+type AdminElectionAudit = {
+  id: string;
+  event_type: "ELECTION_ACTIVATED" | "ELECTION_CLOSED" | "ELECTION_TALLIED";
+  actor_id_hash: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+};
+
 type AdminElectionEligibility = {
   election_id: string;
   election_status: string;
@@ -265,6 +273,9 @@ export function AdminOverview() {
   const [lifecycleBusyId, setLifecycleBusyId] = useState<string | null>(null);
   const [activationBusyId, setActivationBusyId] = useState<string | null>(null);
   const [tallyBusyId, setTallyBusyId] = useState<string | null>(null);
+  const [auditElection, setAuditElection] = useState<AdminElection | null>(null);
+  const [auditEvents, setAuditEvents] = useState<AdminElectionAudit[]>([]);
+  const [auditBusy, setAuditBusy] = useState(false);
   const [photoBusyId, setPhotoBusyId] = useState<string | null>(null);
 
   async function loadData() {
@@ -631,6 +642,24 @@ export function AdminOverview() {
       setMessage(error instanceof Error ? error.message : "No se pudo publicar el tally.");
     } finally {
       setTallyBusyId(null);
+    }
+  }
+
+  async function loadAudit(election: AdminElection) {
+    setAuditElection(election);
+    setAuditBusy(true);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    try {
+      const payload = await requestApiJson<AdminElectionAudit[]>(
+        `${apiUrl}/api/v1/admin/elections/${election.id}/audit`,
+        { credentials: "include", cache: "no-store" },
+      );
+      setAuditEvents(payload);
+    } catch (error: unknown) {
+      setAuditEvents([]);
+      setMessage(error instanceof Error ? error.message : "No se pudo cargar la auditoría.");
+    } finally {
+      setAuditBusy(false);
     }
   }
 
@@ -1035,12 +1064,51 @@ export function AdminOverview() {
                       Configurar posiciones
                     </button>
                   ) : null}
+                  {election.status === "CLOSED" || election.status === "TALLIED" ? (
+                    <button
+                      className="button button-secondary inline-button"
+                      type="button"
+                      onClick={() => void loadAudit(election)}
+                    >
+                      Ver auditoría
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </article>
           ))}</div>
         )}
       </section>
+      {auditElection ? (
+        <section className="empty-state" aria-labelledby="audit-title">
+          <span className="eyebrow">Auditoría electoral</span>
+          <h2 id="audit-title">Eventos: {auditElection.title}</h2>
+          <p>
+            Se muestran únicamente eventos agregados de ciclo electoral y escrutinio de esta
+            organización. El actor se representa por huella y no se incluyen boletas ni identidades.
+          </p>
+          {auditBusy ? <p className="form-message">Cargando auditoría…</p> : null}
+          {!auditBusy && auditEvents.length === 0 ? (
+            <p className="form-message">No hay eventos de auditoría para esta elección.</p>
+          ) : (
+            <div className="election-list" aria-live="polite">
+              {auditEvents.map((event) => (
+                <article className="election-item" key={event.id}>
+                  <div>
+                    <h3>{event.event_type}</h3>
+                    <p>{formatDate(event.created_at)}</p>
+                    <p>Actor (huella): <code>{event.actor_id_hash ?? "No disponible"}</code></p>
+                    <details>
+                      <summary>Ver detalles agregados</summary>
+                      <pre>{JSON.stringify(event.details, null, 2)}</pre>
+                    </details>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : null}
       {eligibilityElection ? (
         <section className="empty-state" aria-labelledby="eligibility-title">
           <span className="eyebrow">Snapshot de elegibilidad</span>
