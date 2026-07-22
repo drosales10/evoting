@@ -72,6 +72,27 @@ class Member(CreatedAtMixin, Base):
     alive: Mapped[bool | None] = mapped_column(nullable=True)
     section: Mapped[str | None] = mapped_column(String(100), nullable=True)
     location: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    region: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    region_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("electoral_regions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    state_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("electoral_states.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    municipality_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("electoral_municipalities.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    polling_place_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("electoral_polling_places.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     mention: Mapped[str | None] = mapped_column(String(255), nullable=True)
     graduation_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     photo_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
@@ -99,6 +120,17 @@ class Election(CreatedAtMixin, Base):
         Numeric(5, 2), nullable=False, default=Decimal("30.00")
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="DRAFT")
+    scope_level: Mapped[str] = mapped_column(String(20), nullable=False, default="NATIONAL")
+    region_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("electoral_regions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    state_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("electoral_states.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     public_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     signing_public_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -332,3 +364,86 @@ class ElectionTallyProposal(CreatedAtMixin, Base):
     proposer_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     reason: Mapped[str] = mapped_column(String(255), nullable=False)
     pilot_override: Mapped[bool] = mapped_column(nullable=False, default=False)
+
+
+class ElectoralRegion(CreatedAtMixin, Base):
+    __tablename__ = "electoral_regions"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "code", name="uq_electoral_regions_org_code"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+    )
+    code: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    geojson: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+
+class ElectoralState(CreatedAtMixin, Base):
+    __tablename__ = "electoral_states"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "code", name="uq_electoral_states_org_code"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+    )
+    region_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("electoral_regions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    code: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    geojson: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+
+class ElectoralMunicipality(CreatedAtMixin, Base):
+    __tablename__ = "electoral_municipalities"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "code", name="uq_electoral_municipalities_org_code"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+    )
+    state_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("electoral_states.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    code: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    geojson: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+
+class ElectoralPollingPlace(CreatedAtMixin, Base):
+    __tablename__ = "electoral_polling_places"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "code", name="uq_electoral_polling_places_org_code"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+    )
+    municipality_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("electoral_municipalities.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    code: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    geojson: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

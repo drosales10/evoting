@@ -254,3 +254,33 @@ async def list_public_elections(
         ) from exc
 
     return [PublicElection.model_validate(election) for election in elections]
+
+
+@router.get("/geo/results/{election_id}")
+async def public_geo_results(
+    election_id: UUID,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> dict:
+    """FeatureCollection of territorial participation for official tallied elections."""
+    response.headers["Cache-Control"] = "no-store"
+    from app.services.geo_features import build_public_results_collection
+
+    row = await session.execute(
+        select(Election, ElectionTally)
+        .join(ElectionTally, ElectionTally.election_id == Election.id)
+        .where(
+            Election.id == election_id,
+            Election.status == "TALLIED",
+            ElectionTally.quorum_met.is_(True),
+            ElectionTally.pilot_override.is_(False),
+        )
+    )
+    result = row.one_or_none()
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Published election results not found",
+        )
+    election, _tally = result
+    return await build_public_results_collection(session, election)

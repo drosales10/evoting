@@ -27,6 +27,7 @@ type AdminMember = {
   alive: boolean | null;
   section: string | null;
   location: string | null;
+  region: string | null;
   mention: string | null;
   graduation_date: string | null;
   photo_filename: string | null;
@@ -52,6 +53,9 @@ type AdminElection = {
   end_time: string;
   quorum_threshold_pct: string;
   status: string;
+  scope_level?: string;
+  region_id?: string | null;
+  state_id?: string | null;
   activated_at: string | null;
   created_at: string;
 };
@@ -250,7 +254,7 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-export function AdminOverview() {
+export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" | "members" }) {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [members, setMembers] = useState<AdminMember[]>([]);
   const [elections, setElections] = useState<AdminElection[]>([]);
@@ -285,26 +289,30 @@ export function AdminOverview() {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     const [overviewResponse, membersResponse, electionsResponse] = await Promise.all([
       fetch(`${apiUrl}/api/v1/admin/overview`, { credentials: "include", cache: "no-store" }),
-      fetch(`${apiUrl}/api/v1/admin/members`, { credentials: "include", cache: "no-store" }),
+      fetch(`${apiUrl}/api/v1/admin/members?limit=50`, { credentials: "include", cache: "no-store" }),
       fetch(`${apiUrl}/api/v1/admin/elections`, { credentials: "include", cache: "no-store" }),
     ]);
     const overviewPayload = (await overviewResponse.json()) as AdminOverview & ApiError;
-    const membersPayload = (await membersResponse.json()) as AdminMember[] & ApiError;
+    const membersPayload = (await membersResponse.json()) as
+      | (AdminMember[] & ApiError)
+      | ({ items: AdminMember[] } & ApiError);
     const electionsPayload = (await electionsResponse.json()) as AdminElection[] & ApiError;
 
     if (!overviewResponse.ok || !membersResponse.ok || !electionsResponse.ok) {
       const unauthorized = [overviewResponse, membersResponse, electionsResponse].some(
         (response) => response.status === 401,
       );
+      const membersDetail =
+        "detail" in membersPayload ? membersPayload.detail : undefined;
       throw new Error(
         unauthorized
           ? "Tu sesión administrativa no está activa. Accede para continuar."
-          : overviewPayload.detail ?? membersPayload.detail ?? electionsPayload.detail ??
+          : overviewPayload.detail ?? membersDetail ?? electionsPayload.detail ??
             "No se pudo cargar el resumen administrativo.",
       );
     }
     setOverview(overviewPayload);
-    setMembers(membersPayload);
+    setMembers(Array.isArray(membersPayload) ? membersPayload : membersPayload.items);
     setElections(electionsPayload);
     setMessage("");
   }
@@ -444,6 +452,9 @@ export function AdminOverview() {
           start_time: new Date(startTime).toISOString(),
           end_time: new Date(endTime).toISOString(),
           quorum_threshold_pct: Number(form.get("quorum_threshold_pct") ?? 30),
+          scope_level: String(form.get("scope_level") ?? "NATIONAL"),
+          region_id: String(form.get("region_id") ?? "").trim() || null,
+          state_id: String(form.get("state_id") ?? "").trim() || null,
         }),
       });
       const payload = (await response.json()) as AdminElection & ApiError;
@@ -921,10 +932,11 @@ export function AdminOverview() {
         <div className="surface-card"><span className="eyebrow">Elecciones</span><h2>{overview.election_count}</h2><p>Procesos de la organización</p></div>
         <div className="surface-card"><span className="eyebrow">Urna</span><h2>{overview.encrypted_ballot_count}</h2><p>Papeletas cifradas</p></div>
       </div>
+      {focus !== "elections" ? (
       <section className="empty-state" aria-labelledby="member-title">
         <span className="eyebrow">Padrón administrativo</span>
         <h2 id="member-title">Importar y administrar padrón</h2>
-        <p>El XLSX usa las 17 columnas de Padron_Administrativo.xlsx. Las fotos se cargan por miembro y se almacenan en PostgreSQL.</p>
+        <p>El XLSX usa las columnas de Padron_Administrativo.xlsx (incluye Región). Las fotos se cargan por miembro y se almacenan en PostgreSQL.</p>
         <div className="hero-actions">
           <a className="button button-secondary" href={`${apiUrl}/api/v1/admin/members/export`} download="padron_administrativo.xlsx">
             Exportar XLSX
@@ -963,7 +975,7 @@ export function AdminOverview() {
                 <div>
                   <h3>{member.full_name}</h3>
                   <p>{member.registry_code ?? "Sin código"} · {member.email} · Documento {member.dni}</p>
-                  <p>{member.status} · {member.member_type ?? "Sin tipo"} · {member.location ?? "Sin ubicación"}</p>
+                  <p>{member.status} · {member.member_type ?? "Sin tipo"} · Región {member.region ?? "—"} · {member.location ?? "Sin ubicación"}</p>
                   {member.photo_filename ? (
                     <a className="card-link" href={`${apiUrl}/api/v1/admin/members/${member.id}/photo`} target="_blank" rel="noreferrer">Ver foto: {member.photo_filename}</a>
                   ) : null}
@@ -977,6 +989,8 @@ export function AdminOverview() {
           </div>
         )}
       </section>
+      ) : null}
+      {focus !== "elections" ? (
       <section className="empty-state" aria-labelledby="election-form-title">
         <span className="eyebrow">Gestión electoral</span>
         <h2 id="election-form-title">Crear elección</h2>
@@ -986,10 +1000,21 @@ export function AdminOverview() {
           <label htmlFor="election-start">Inicio</label><input id="election-start" name="start_time" type="datetime-local" required />
           <label htmlFor="election-end">Fin</label><input id="election-end" name="end_time" type="datetime-local" required />
           <label htmlFor="election-quorum">Quórum (%)</label><input id="election-quorum" name="quorum_threshold_pct" type="number" min="0" max="100" step="0.01" defaultValue="30" required />
+          <label htmlFor="election-scope">Alcance territorial</label>
+          <select id="election-scope" name="scope_level" defaultValue="NATIONAL" required>
+            <option value="NATIONAL">Nacional (N1)</option>
+            <option value="REGIONAL">Regional (N2)</option>
+            <option value="STATE">Estatal / Seccional (N3)</option>
+          </select>
+          <label htmlFor="election-region-id">UUID región (si REGIONAL)</label>
+          <input id="election-region-id" name="region_id" placeholder="Opcional salvo alcance regional" />
+          <label htmlFor="election-state-id">UUID estado (si STATE)</label>
+          <input id="election-state-id" name="state_id" placeholder="Opcional salvo alcance estatal" />
           <button className="button button-primary" type="submit" disabled={busy}>{busy ? "Creando…" : "Crear elección DRAFT"}</button>
         </form>
         {message ? <p className="form-message" role="status">{message}</p> : null}
       </section>
+      ) : null}
       <section aria-labelledby="election-list-title">
         <span className="eyebrow">Procesos registrados</span><h2 id="election-list-title">Elecciones</h2>
         {elections.length === 0 ? <div className="empty-state"><p>No hay elecciones creadas para esta organización.</p></div> : (
@@ -997,7 +1022,7 @@ export function AdminOverview() {
             <article className="election-item" key={election.id}>
               <div>
                 <h3>{election.title}</h3>
-                <p>{election.voting_type} · Quórum {election.quorum_threshold_pct}%</p>
+                <p>{election.voting_type} · Quórum {election.quorum_threshold_pct}% · Alcance {election.scope_level ?? "NATIONAL"}</p>
                 <p>Estado: {election.status}</p>
               </div>
               <div>

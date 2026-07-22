@@ -23,7 +23,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +37,8 @@ from app.models import (
     Election,
     ElectionTally,
     ElectionTallyProposal,
+    ElectoralRegion,
+    ElectoralState,
     EncryptedBallot,
     Member,
     MemberElectionStatus,
@@ -80,6 +82,11 @@ class AdminMemberCreateRequest(BaseModel):
     full_name: str = Field(min_length=2, max_length=255)
     dni: str = Field(min_length=3, max_length=50, pattern=r"^[A-Za-z0-9._-]+$")
     membership_months: int = Field(default=0, ge=0, le=1200)
+    region: str | None = Field(default=None, max_length=120)
+    section: str | None = Field(default=None, max_length=120)
+    location: str | None = Field(default=None, max_length=120)
+    region_id: UUID | None = None
+    state_id: UUID | None = None
 
     @field_validator("email", "full_name", "dni", mode="before")
     @classmethod
@@ -90,6 +97,14 @@ class AdminMemberCreateRequest(BaseModel):
     @classmethod
     def normalize_email(cls, value: str) -> str:
         return value.lower()
+
+    @field_validator("region", "section", "location", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
 
 class AdminMemberResponse(BaseModel):
@@ -110,12 +125,27 @@ class AdminMemberResponse(BaseModel):
     alive: bool | None
     section: str | None
     location: str | None
+    region: str | None
+    region_id: UUID | None = None
+    state_id: UUID | None = None
+    municipality_id: UUID | None = None
+    polling_place_id: UUID | None = None
     mention: str | None
     graduation_date: date | None
     photo_filename: str | None
     photo_content_type: str | None
     photo_size_bytes: int | None
     created_at: datetime
+
+
+class AdminMemberListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[AdminMemberResponse]
+    page: int
+    limit: int
+    total: int
+    total_pages: int
 
 
 class AdminMemberImportErrorResponse(BaseModel):
@@ -141,6 +171,9 @@ class AdminElectionCreateRequest(BaseModel):
     start_time: datetime
     end_time: datetime
     quorum_threshold_pct: Decimal = Field(default=Decimal("30.00"), ge=0, le=100)
+    scope_level: Literal["NATIONAL", "REGIONAL", "STATE"] = "NATIONAL"
+    region_id: UUID | None = None
+    state_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_schedule(self) -> "AdminElectionCreateRequest":
@@ -152,6 +185,13 @@ class AdminElectionCreateRequest(BaseModel):
                 raise ValueError(f"{field_name} must include a timezone")
         if self.end_time <= self.start_time:
             raise ValueError("end_time must be after start_time")
+        if self.scope_level == "REGIONAL" and self.region_id is None:
+            raise ValueError("region_id is required for REGIONAL elections")
+        if self.scope_level == "STATE" and self.state_id is None:
+            raise ValueError("state_id is required for STATE elections")
+        if self.scope_level == "NATIONAL":
+            self.region_id = None
+            self.state_id = None
         return self
 
 
@@ -165,6 +205,9 @@ class AdminElectionResponse(BaseModel):
     end_time: datetime
     quorum_threshold_pct: Decimal
     status: ElectionStatus
+    scope_level: str = "NATIONAL"
+    region_id: UUID | None = None
+    state_id: UUID | None = None
     activated_at: datetime | None
     created_at: datetime
 
@@ -642,21 +685,62 @@ async def admin_overview(
     )
 
 
-@router.get("/members", response_model=list[AdminMemberResponse])
+@router.get("/members", response_model=AdminMemberListResponse)
 async def list_admin_members(
     response: Response,
     claims: Annotated[AccessClaims, Depends(_require_member_manager)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> list[AdminMemberResponse]:
-    """List the administrative roster for the authenticated organization."""
+    q: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=25, ge=1, le=200),
+    region_id: UUID | None = Query(default=None),
+    state_id: UUID | None = Query(default=None),
+    sort: str = Query(default="full_name"),
+) -> AdminMemberListResponse:
+    """List the administrative roster with search, filters and pagination."""
     response.headers["Cache-Control"] = "no-store"
+    filters = [Member.organization_id == claims.org_id]
+    if q:
+        like = f"%{q.strip()}%"
+        filters.append(
+            or_(
+                Member.full_name.ilike(like),
+                Member.dni.ilike(like),
+                Member.email.ilike(like),
+                Member.registry_code.ilike(like),
+                Member.region.ilike(like),
+                Member.section.ilike(like),
+            )
+        )
+    if region_id:
+        filters.append(Member.region_id == region_id)
+    if state_id:
+        filters.append(Member.state_id == state_id)
+
+    total = int(
+        (await session.execute(select(func.count(Member.id)).where(*filters))).scalar_one()
+    )
+    order = Member.full_name.asc()
+    if sort == "created_at":
+        order = Member.created_at.desc()
+    elif sort == "registry_code":
+        order = Member.registry_code.asc()
     statement = (
         select(Member)
-        .where(Member.organization_id == claims.org_id)
-        .order_by(Member.full_name.asc(), Member.created_at.asc())
+        .where(*filters)
+        .order_by(order, Member.created_at.asc())
+        .offset((page - 1) * limit)
+        .limit(limit)
     )
-    members = await session.scalars(statement)
-    return [AdminMemberResponse.model_validate(member) for member in members]
+    members = list((await session.scalars(statement)).all())
+    total_pages = max(1, (total + limit - 1) // limit) if total else 1
+    return AdminMemberListResponse(
+        items=[AdminMemberResponse.model_validate(member) for member in members],
+        page=page,
+        limit=limit,
+        total=total,
+        total_pages=total_pages,
+    )
 
 
 @router.post(
@@ -679,6 +763,11 @@ async def create_admin_member(
         dni=payload.dni,
         status="ACTIVE",
         membership_months=payload.membership_months,
+        region=payload.region,
+        section=payload.section,
+        location=payload.location,
+        region_id=payload.region_id,
+        state_id=payload.state_id,
     )
     session.add(member)
     try:
@@ -863,6 +952,24 @@ async def create_admin_election(
 ) -> AdminElectionResponse:
     """Create a tenant-scoped election in DRAFT state."""
     response.headers["Cache-Control"] = "no-store"
+    if payload.scope_level == "REGIONAL" and payload.region_id:
+        region = await session.scalar(
+            select(ElectoralRegion).where(
+                ElectoralRegion.id == payload.region_id,
+                ElectoralRegion.organization_id == claims.org_id,
+            )
+        )
+        if region is None:
+            raise HTTPException(status_code=404, detail="Region not found")
+    if payload.scope_level == "STATE" and payload.state_id:
+        state = await session.scalar(
+            select(ElectoralState).where(
+                ElectoralState.id == payload.state_id,
+                ElectoralState.organization_id == claims.org_id,
+            )
+        )
+        if state is None:
+            raise HTTPException(status_code=404, detail="State not found")
     election = Election(
         organization_id=claims.org_id,
         title=payload.title,
@@ -871,6 +978,9 @@ async def create_admin_election(
         end_time=payload.end_time,
         quorum_threshold_pct=payload.quorum_threshold_pct,
         status="DRAFT",
+        scope_level=payload.scope_level,
+        region_id=payload.region_id,
+        state_id=payload.state_id,
     )
     session.add(election)
     await session.commit()
@@ -959,7 +1069,12 @@ async def open_election_registration(
             detail="Only DRAFT elections can open registration",
         )
 
-    members = await session.scalars(select(Member).where(Member.organization_id == claims.org_id))
+    members_query = select(Member).where(Member.organization_id == claims.org_id)
+    if election.scope_level == "REGIONAL" and election.region_id:
+        members_query = members_query.where(Member.region_id == election.region_id)
+    elif election.scope_level == "STATE" and election.state_id:
+        members_query = members_query.where(Member.state_id == election.state_id)
+    members = await session.scalars(members_query)
     for member in members:
         member_eligible = member.status == "ACTIVE" and member.alive is True
         session.add(

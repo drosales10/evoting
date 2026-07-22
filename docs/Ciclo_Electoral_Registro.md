@@ -5,15 +5,28 @@ Esta fase implementa el paso controlado desde la configuración de una elección
 ## Estados implementados
 
 - `DRAFT`: se pueden configurar posiciones. La elección todavía no tiene snapshot de elegibilidad.
-- `REGISTRATION`: se abrió el registro y se creó un snapshot de todos los miembros de la organización.
+- `REGISTRATION`: se abrió el registro y se creó un snapshot de elegibilidad filtrado por alcance territorial.
 - `FREEZE`: el snapshot quedó congelado y ya no se puede modificar mediante estos endpoints.
 
 Las transiciones permitidas son únicamente `DRAFT → REGISTRATION → FREEZE`.
 
+## Alcance territorial (`scope_level`)
+
+Al crear una elección (`POST /api/v1/admin/elections`) se puede indicar:
+
+| `scope_level` | Requiere | Snapshot al abrir registro |
+|---|---|---|
+| `NATIONAL` (default) | — | Todos los miembros de la organización |
+| `REGIONAL` | `region_id` (N2) | Miembros con `region_id` igual |
+| `STATE` | `state_id` (N3) | Miembros con `state_id` igual |
+
+Migración: `0009_territorial_hierarchy.py` (`elections.scope_level`, `region_id`, `state_id`).
+
 ## Elegibilidad
 
-Al abrir el registro se crea una fila `member_election_status` por cada miembro de la organización. Un miembro es elegible cuando:
+Al abrir el registro se crea una fila `member_election_status` por cada miembro **dentro del alcance** de la elección. Un miembro es elegible cuando:
 
+- pertenece al territorio del `scope_level`;
 - `members.status = ACTIVE`; y
 - `members.alive = true`.
 

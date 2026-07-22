@@ -54,7 +54,9 @@ Con Docker: `docker compose up --build` (ver `docker-compose.yml`).
 | [docs/Official_Tally_Runbook.md](docs/Official_Tally_Runbook.md) | Escrutinio, quórum y doble aprobación |
 | [docs/Public_Verification.md](docs/Public_Verification.md) | Verificación independiente `/verify` + CLI |
 | [docs/Production_Ops.md](docs/Production_Ops.md) | Correo, HTTPS, backups, monitoreo |
-| [docs/Ciclo_Electoral_Registro.md](docs/Ciclo_Electoral_Registro.md) | Ciclo de estados |
+| [docs/Ciclo_Electoral_Registro.md](docs/Ciclo_Electoral_Registro.md) | Ciclo de estados y alcance territorial |
+| [docs/Padron_Administrativo.md](docs/Padron_Administrativo.md) | Padrón XLSX (columna Región) |
+| [docs/Territorio_Geovisores.md](docs/Territorio_Geovisores.md) | N1–N5, PostGIS, Leaflet/DeckGL |
 
 ## Seguridad (resumen)
 

@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Member
+from app.models import ElectoralRegion, Member
 
 EXCEL_SHEET_NAME = "Datos"
 EXCEL_HEADERS = (
@@ -31,6 +31,7 @@ EXCEL_HEADERS = (
     "Sem",
     "Sexo",
     "Vivo",
+    "Región",
     "Seccional",
     "Ubicación",
     "Mención",
@@ -55,6 +56,7 @@ class ParsedMember:
     semester: str | None
     sex: str | None
     alive: bool | None
+    region: str | None
     section: str | None
     location: str | None
     mention: str | None
@@ -151,7 +153,10 @@ def _status(value: Any) -> str:
 
 def _parse_row(row: tuple[Any, ...], columns: dict[str, int], row_number: int) -> ParsedMember:
     def value(header: str) -> Any:
-        index = columns[_header_key(header)]
+        key = _header_key(header)
+        if key not in columns:
+            return None
+        index = columns[key]
         return row[index] if index < len(row) else None
 
     return ParsedMember(
@@ -168,6 +173,7 @@ def _parse_row(row: tuple[Any, ...], columns: dict[str, int], row_number: int) -
         semester=_text(value("Sem")),
         sex=_text(value("Sexo")),
         alive=_optional_alive(value("Vivo")),
+        region=_text(value("Región")),
         section=_text(value("Seccional")),
         location=_text(value("Ubicación")),
         mention=_text(value("Mención")),
@@ -198,8 +204,9 @@ def parse_member_workbook(content: bytes) -> tuple[list[ParsedMember], list[Impo
     columns = {
         _header_key(value): index for index, value in enumerate(header_row) if value is not None
     }
+    required_headers = tuple(h for h in EXCEL_HEADERS if h != "Región")
     missing = [
-        _header_key(header) for header in EXCEL_HEADERS if _header_key(header) not in columns
+        _header_key(header) for header in required_headers if _header_key(header) not in columns
     ]
     if missing:
         raise MemberSpreadsheetError(f"Missing required columns: {', '.join(missing)}")
@@ -227,7 +234,11 @@ def parse_member_workbook(content: bytes) -> tuple[list[ParsedMember], list[Impo
     return parsed, errors, rows_read
 
 
-def _member_values(member: ParsedMember) -> dict[str, Any]:
+def _member_values(
+    member: ParsedMember,
+    *,
+    region_id: UUID | None = None,
+) -> dict[str, Any]:
     return {
         "registry_code": member.registry_code,
         "full_name": member.full_name,
@@ -241,11 +252,13 @@ def _member_values(member: ParsedMember) -> dict[str, Any]:
         "semester": member.semester,
         "sex": member.sex,
         "alive": member.alive,
+        "region": member.region,
         "section": member.section,
         "location": member.location,
         "mention": member.mention,
         "graduation_date": member.graduation_date,
         "photo_filename": member.photo_filename,
+        "region_id": region_id,
     }
 
 
@@ -257,6 +270,20 @@ async def import_members(
     rows_read: int,
     dry_run: bool,
 ) -> MemberImportResult:
+    regions = (
+        await session.scalars(
+            select(ElectoralRegion).where(ElectoralRegion.organization_id == organization_id)
+        )
+    ).all()
+    region_by_code = {r.code.strip().upper(): r.id for r in regions}
+    region_by_name = {r.name.strip().upper(): r.id for r in regions}
+
+    def resolve_region_id(label: str | None) -> UUID | None:
+        if not label:
+            return None
+        key = label.strip().upper()
+        return region_by_code.get(key) or region_by_name.get(key)
+
     result = MemberImportResult(rows_read=rows_read, errors=list(errors))
     for parsed in members:
         existing = await session.scalar(
@@ -283,13 +310,19 @@ async def import_members(
         try:
             created_this = False
             updated_this = False
+            region_id = resolve_region_id(parsed.region)
             async with session.begin_nested():
                 if existing is None:
-                    session.add(Member(organization_id=organization_id, **_member_values(parsed)))
+                    session.add(
+                        Member(
+                            organization_id=organization_id,
+                            **_member_values(parsed, region_id=region_id),
+                        )
+                    )
                     result.created += 1
                     created_this = True
                 else:
-                    values = _member_values(parsed)
+                    values = _member_values(parsed, region_id=region_id)
                     if values["photo_filename"] is None and existing.photo_data:
                         values.pop("photo_filename")
                     for field, value in values.items():
@@ -345,6 +378,7 @@ def build_member_workbook(members: Iterable[Member]) -> BytesIO:
                 member.semester,
                 member.sex,
                 1 if member.alive is True else 0 if member.alive is False else None,
+                member.region,
                 member.section,
                 member.location,
                 member.mention,

@@ -1,8 +1,18 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { Fraunces, Source_Sans_3 } from "next/font/google";
 import type { ReactNode } from "react";
 
 import "./globals.css";
+
+const display = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-display",
+});
+
+const sans = Source_Sans_3({
+  subsets: ["latin"],
+  variable: "--font-sans",
+});
 
 export const metadata: Metadata = {
   title: "eVoting",
@@ -11,19 +21,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="es">
-      <body>
-        <header className="site-header">
-          <Link className="brand" href="/">
-            e<span>Voting</span>
-          </Link>
-          <nav aria-label="Navegación pública">
-            <Link href="/elections">Elecciones</Link>
-          </nav>
-        </header>
-        <main>{children}</main>
-        <footer className="site-footer">Base inicial · identidad y urna se mantienen separadas</footer>
-      </body>
+    <html lang="es" className={`${display.variable} ${sans.variable}`}>
+      <body className="min-h-screen font-sans antialiased">{children}</body>
     </html>
   );
 }

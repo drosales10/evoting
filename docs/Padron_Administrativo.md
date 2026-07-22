@@ -24,7 +24,8 @@ El archivo de referencia es `docs/Padron_Administrativo.xlsx`, hoja `Datos`. La 
 | `Sem` | `semester` | Texto opcional, por ejemplo `U`, `B` o `A`. |
 | `Sexo` | `sex` | Texto opcional. |
 | `Vivo` | `alive` | `1`/`true`/`sí` → `true`; `0`/`false`/`no` → `false`; vacío → `null`. |
-| `Seccional` | `section` | Texto opcional. |
+| `Región` | `region` (+ `region_id` si el código coincide) | Texto opcional (N2). Si el valor coincide con `electoral_regions.code` de la organización, también se asigna la FK. |
+| `Seccional` | `section` | Texto opcional (legado / N3 textual). |
 | `Ubicación` | `location` | Texto opcional. |
 | `Mención` | `mention` | Texto opcional. |
 | `Fecha Grado` | `graduation_date` | Fecha; acepta `YYYY-MM-DD`, `DD/MM/YYYY`, `DD-MM-YYYY` y `MM/DD/YYYY`. |
@@ -63,7 +64,7 @@ Antes de persistir el archivo de referencia se recomienda ejecutar `dry_run=true
 `GET /api/v1/admin/members/export` devuelve un archivo descargable con:
 
 - Hoja `Datos`.
-- Las mismas 17 columnas del contrato.
+- Las mismas columnas del contrato (incluye **Región**).
 - Filas únicamente de la organización del token ADMIN.
 - Estados exportados como `Activo`/`Inactivo`.
 - Metadatos de foto en la columna `Foto`.
@@ -86,7 +87,13 @@ La imagen se almacena en PostgreSQL como `members.photo_data` (`BYTEA`) junto co
 
 ## Campos y migración PostgreSQL
 
-La migración `apps/backend/alembic/versions/0004_member_registry_fields.py` agrega los campos del contrato como columnas nullable para mantener compatibilidad con miembros existentes y crea `uq_members_organization_registry_code`. La migración usa estrategia expand; no elimina datos ni define downgrade automático. El modelo SQLAlchemy correspondiente está en `apps/backend/app/models/core.py`.
+La migración `0004_member_registry_fields.py` agrega los campos del contrato como columnas nullable. La migración `0009_territorial_hierarchy.py` agrega:
+
+- `members.region` (texto legado / etiqueta N2);
+- FKs opcionales `region_id`, `state_id`, `municipality_id`, `polling_place_id`;
+- tablas territoriales N2–N5 con geometría PostGIS opcional.
+
+Listado ADMIN: `GET /api/v1/admin/members?q=&page=&limit=&sort=&region_id=&state_id=` (paginado).
 
 Aplicar/verificar en el backend:
 
