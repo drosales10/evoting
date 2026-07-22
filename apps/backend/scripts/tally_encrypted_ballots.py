@@ -8,6 +8,8 @@ import base64
 import hashlib
 import json
 import os
+from datetime import UTC, datetime
+from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -22,10 +24,11 @@ from cryptography.hazmat.primitives.serialization import (
     load_pem_private_key,
     load_pem_public_key,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db.session import dispose_engine, get_session_factory
-from app.models import Election, EncryptedBallot, Slate
+from app.models import Election, EncryptedBallot, MemberElectionStatus, Slate
+from app.services.tally_artifact import artifact_sha256, sign_artifact
 
 
 class TallyError(RuntimeError):
@@ -136,11 +139,40 @@ async def tally_encrypted_ballots(election_id: UUID, private_key_path: Path) -> 
                 raise TallyError(f"Ballot {ballot.id} references an unknown slate")
             counts[slate_id] += 1
 
-        return {
+        eligible_member_count, voted_member_count = (
+            int(value)
+            for value in (
+                await session.execute(
+                    select(
+                        func.count(MemberElectionStatus.id),
+                        func.count(MemberElectionStatus.id).filter(
+                            MemberElectionStatus.has_voted.is_(True)
+                        ),
+                    ).where(
+                        MemberElectionStatus.election_id == election.id,
+                        MemberElectionStatus.organization_id == election.organization_id,
+                        MemberElectionStatus.eligible.is_(True),
+                    )
+                )
+            ).one()
+        )
+        quorum_required = int(
+            (
+                Decimal(eligible_member_count) * election.quorum_threshold_pct / Decimal("100")
+            ).to_integral_value(rounding=ROUND_CEILING)
+        )
+        artifact = {
+            "artifact_version": "pilot-tally-v1",
             "election_id": str(election.id),
-            "election_status": election.status,
             "public_key_sha256": public_key_sha256,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "eligible_member_count": eligible_member_count,
+            "voted_member_count": voted_member_count,
+            "quorum_threshold_pct": str(election.quorum_threshold_pct),
+            "quorum_required": quorum_required,
+            "quorum_met": voted_member_count >= quorum_required,
             "ballot_count": len(ballots),
+            "receipt_hashes": sorted(ballot.receipt_hash.lower() for ballot in ballots),
             "counts": [
                 {
                     "slate_id": slate_id,
@@ -149,6 +181,12 @@ async def tally_encrypted_ballots(election_id: UUID, private_key_path: Path) -> 
                 }
                 for slate_id, count in counts.items()
             ],
+        }
+        signature = sign_artifact(artifact, private_key)
+        return {
+            "artifact": artifact,
+            "signature": signature,
+            "artifact_sha256": artifact_sha256(artifact),
             "persisted": False,
             "note": (
                 "Tally was computed locally; no private key or result was written "

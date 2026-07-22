@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime
 from decimal import ROUND_CEILING, Decimal
 from io import BytesIO
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
@@ -34,6 +34,7 @@ from app.models import (
     AuditLog,
     Candidate,
     Election,
+    ElectionTally,
     EncryptedBallot,
     Member,
     MemberElectionStatus,
@@ -48,6 +49,7 @@ from app.services.member_spreadsheet import (
     import_members,
     parse_member_workbook,
 )
+from app.services.tally_artifact import artifact_sha256, verify_artifact
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 ELECTION_MANAGER_ROLES = frozenset({"SUPER_ADMIN", "ELECTORAL_JUSTICE"})
@@ -237,6 +239,54 @@ class AdminTallyReadinessResponse(BaseModel):
     requires_offline_private_key: bool
     zkp_verification_available: bool
     can_mark_tallied: bool
+
+
+class AdminTallyCount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    slate_id: UUID
+    slate_name: str
+    votes: int = Field(ge=0)
+
+
+class AdminTallyArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_version: Literal["pilot-tally-v1"]
+    election_id: UUID
+    public_key_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    generated_at: datetime
+    eligible_member_count: int = Field(ge=0)
+    voted_member_count: int = Field(ge=0)
+    quorum_threshold_pct: Decimal = Field(ge=0, le=100)
+    quorum_required: int = Field(ge=0)
+    quorum_met: bool
+    ballot_count: int = Field(ge=0)
+    receipt_hashes: list[str]
+    counts: list[AdminTallyCount]
+
+
+class AdminTallyPublishRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact: dict[str, Any]
+    signature: str = Field(min_length=32, max_length=8192)
+    pilot_override: bool = False
+    reason: str = Field(min_length=10, max_length=255)
+
+
+class AdminTallyPublishResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tally_id: UUID
+    election_id: UUID
+    election_status: ElectionStatus
+    artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    ballot_count: int = Field(ge=0)
+    quorum_met: bool
+    pilot_override: bool
+    counts: list[AdminTallyCount]
+    published_at: datetime
 
 
 class AdminElectionEligibilityResponse(BaseModel):
@@ -1258,6 +1308,204 @@ async def get_tally_readiness(
         requires_offline_private_key=True,
         zkp_verification_available=False,
         can_mark_tallied=False,
+    )
+
+
+@router.post(
+    "/elections/{election_id}/tally",
+    response_model=AdminTallyPublishResponse,
+)
+async def publish_tally(
+    election_id: UUID,
+    payload: AdminTallyPublishRequest,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> AdminTallyPublishResponse:
+    """Verify an offline signed tally and persist only aggregate results."""
+    response.headers["Cache-Control"] = "no-store"
+    election = await session.scalar(
+        select(Election)
+        .where(Election.id == election_id, Election.organization_id == claims.org_id)
+        .with_for_update()
+    )
+    if election is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Election not found")
+    if election.status != "CLOSED":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only CLOSED elections can publish a tally",
+        )
+    if payload.pilot_override and not (
+        settings.environment == "development" and settings.voter_test_mode
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Pilot tally publication is available only in development test mode",
+        )
+    if await session.scalar(select(ElectionTally).where(ElectionTally.election_id == election.id)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A tally has already been published for this election",
+        )
+
+    try:
+        artifact_model = AdminTallyArtifact.model_validate(payload.artifact)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid tally artifact",
+        ) from exc
+    if artifact_model.election_id != election.id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tally artifact election does not match the requested election",
+        )
+    if not election.public_key:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Election public key is not configured",
+        )
+    expected_public_key_hash = hashlib.sha256(election.public_key.encode("utf-8")).hexdigest()
+    if artifact_model.public_key_sha256 != expected_public_key_hash:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tally artifact public key hash does not match the election",
+        )
+    try:
+        public_key = load_pem_public_key(election.public_key.encode("utf-8"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Election public key is invalid",
+        ) from exc
+    if not isinstance(public_key, RSAPublicKey) or not verify_artifact(
+        payload.artifact, payload.signature, public_key
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tally artifact signature is invalid",
+        )
+
+    eligible_count, voted_count, ballot_count = await _election_participation_counts(
+        session, election.id, claims.org_id
+    )
+    quorum_required = _required_quorum_votes(eligible_count, election.quorum_threshold_pct)
+    quorum_met = voted_count >= quorum_required
+    if (
+        artifact_model.eligible_member_count != eligible_count
+        or artifact_model.voted_member_count != voted_count
+        or artifact_model.ballot_count != ballot_count
+        or artifact_model.quorum_required != quorum_required
+        or artifact_model.quorum_met != quorum_met
+        or artifact_model.quorum_threshold_pct != election.quorum_threshold_pct
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tally artifact counts do not match the election snapshot",
+        )
+    if not quorum_met and not payload.pilot_override:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Quorum is not met; pilot_override is required for this local test tally",
+        )
+
+    current_receipts = sorted(
+        receipt.lower()
+        for receipt in (
+            await session.scalars(
+                select(EncryptedBallot.receipt_hash).where(
+                    EncryptedBallot.election_id == election.id,
+                    EncryptedBallot.organization_id == claims.org_id,
+                )
+            )
+        )
+    )
+    artifact_receipts = sorted(receipt.lower() for receipt in artifact_model.receipt_hashes)
+    if artifact_receipts != current_receipts:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tally artifact receipts do not match the encrypted ballot set",
+        )
+
+    slates = list(
+        (
+            await session.scalars(
+                select(Slate).where(
+                    Slate.election_id == election.id,
+                    Slate.organization_id == claims.org_id,
+                )
+            )
+        ).all()
+    )
+    slate_names = {slate.id: slate.name for slate in slates}
+    artifact_slate_ids = {item.slate_id for item in artifact_model.counts}
+    if artifact_slate_ids != set(slate_names):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tally artifact slate set does not match the election",
+        )
+    if any(slate_names[item.slate_id] != item.slate_name for item in artifact_model.counts):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tally artifact slate names do not match the election",
+        )
+    if sum(item.votes for item in artifact_model.counts) != ballot_count:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tally counts do not sum to the encrypted ballot count",
+        )
+
+    published_at = datetime.now(UTC)
+    tally = ElectionTally(
+        organization_id=claims.org_id,
+        election_id=election.id,
+        artifact_sha256=artifact_sha256(payload.artifact),
+        signature=payload.signature,
+        artifact=payload.artifact,
+        eligible_member_count=eligible_count,
+        voted_member_count=voted_count,
+        ballot_count=ballot_count,
+        quorum_required=quorum_required,
+        quorum_met=quorum_met,
+        pilot_override=payload.pilot_override,
+    )
+    session.add(tally)
+    election.status = "TALLIED"
+    session.add(
+        AuditLog(
+            organization_id=claims.org_id,
+            event_type="ELECTION_TALLIED",
+            actor_id_hash=hashlib.sha256(str(claims.sub).encode("utf-8")).hexdigest(),
+            details={
+                "election_id": str(election.id),
+                "tally_id": str(tally.id),
+                "artifact_sha256": tally.artifact_sha256,
+                "ballot_count": ballot_count,
+                "quorum_met": quorum_met,
+                "pilot_override": payload.pilot_override,
+                "reason": payload.reason,
+            },
+        )
+    )
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A tally has already been published for this election",
+        ) from exc
+    return AdminTallyPublishResponse(
+        tally_id=tally.id,
+        election_id=election.id,
+        election_status=cast(ElectionStatus, election.status),
+        artifact_sha256=tally.artifact_sha256,
+        ballot_count=ballot_count,
+        quorum_met=quorum_met,
+        pilot_override=payload.pilot_override,
+        counts=artifact_model.counts,
+        published_at=published_at,
     )
 
 

@@ -101,7 +101,11 @@ Después del cierre, si se conserva la clave privada correspondiente a la clave 
   --private-key C:\\ruta\\segura\\clave-privada.pem
 ```
 
-El script verifica que la clave coincida con la clave pública de la elección, valida cada `receipt_hash`, descifra el payload en memoria y muestra conteos por plancha. No escribe resultados, no cambia el estado a `TALLIED`, no guarda la clave privada y falla si alguna boleta no puede validarse o descifrarse.
+El script genera un artefacto firmado con `artifact`, `signature` y `artifact_sha256`. ADMIN puede verificarlo y publicarlo mediante `POST /api/v1/admin/elections/{election_id}/tally` o desde **Verificar y publicar tally** pegando el JSON completo. El backend vuelve a comprobar la firma RSA, la huella de la clave pública, todos los `receipt_hashes`, el número de boletas, el conjunto de planchas y el quórum antes de persistir únicamente el agregado.
+
+La publicación oficial exige quórum. Para este piloto, `pilot_override=true` permite persistir el resultado como `TALLIED` solo en development con `VOTER_TEST_MODE=true`; queda marcado como piloto y no aparece en resultados públicos. La tabla `election_tallies` no contiene miembros, sesiones, selecciones individuales ni clave privada. El endpoint público `/api/v1/public/elections/{election_id}/results` solo expone tallies `TALLIED` con quórum cumplido y sin override de piloto.
+
+La migración `0007_election_tallies` debe revisarse y aplicarse antes de publicar un tally. No se aplica automáticamente en este flujo.
 
 ## Piloto VOTER de ocho votos (solo desarrollo)
 

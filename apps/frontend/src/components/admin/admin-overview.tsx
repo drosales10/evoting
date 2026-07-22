@@ -81,6 +81,17 @@ type AdminElectionCloseResponse = {
   pilot_override: boolean;
 };
 
+type AdminTallyPublishResponse = {
+  tally_id: string;
+  election_id: string;
+  election_status: string;
+  artifact_sha256: string;
+  ballot_count: number;
+  quorum_met: boolean;
+  pilot_override: boolean;
+  published_at: string;
+};
+
 type AdminElectionEligibility = {
   election_id: string;
   election_status: string;
@@ -253,6 +264,7 @@ export function AdminOverview() {
   const [positionBusy, setPositionBusy] = useState(false);
   const [lifecycleBusyId, setLifecycleBusyId] = useState<string | null>(null);
   const [activationBusyId, setActivationBusyId] = useState<string | null>(null);
+  const [tallyBusyId, setTallyBusyId] = useState<string | null>(null);
   const [photoBusyId, setPhotoBusyId] = useState<string | null>(null);
 
   async function loadData() {
@@ -562,6 +574,63 @@ export function AdminOverview() {
       setMessage(error instanceof Error ? error.message : "No se pudo activar la elección.");
     } finally {
       setActivationBusyId(null);
+    }
+  }
+
+  async function handlePublishTally(
+    election: AdminElection,
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    setTallyBusyId(election.id);
+    setMessage("");
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const rawArtifact = String(form.get("tally_artifact") ?? "").trim();
+    const pilotOverride = form.get("tally_pilot_override") === "on";
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    try {
+      const parsed = JSON.parse(rawArtifact) as {
+        artifact?: Record<string, unknown>;
+        signature?: string;
+      };
+      const artifact = parsed.artifact ?? parsed;
+      const signature = parsed.signature;
+      if (!signature) {
+        throw new Error("El JSON del tally no contiene signature.");
+      }
+      const payload = await requestApiJson<AdminTallyPublishResponse>(
+        `${apiUrl}/api/v1/admin/elections/${election.id}/tally`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            artifact,
+            signature,
+            pilot_override: pilotOverride,
+            reason: pilotOverride
+              ? "Publicación explícita del tally piloto firmado"
+              : "Publicación del tally firmado tras verificación de quorum",
+          }),
+        },
+      );
+      setElections((current) => current.map((item) =>
+        item.id === election.id ? { ...item, status: payload.election_status } : item,
+      ));
+      if (selectedElection?.id === election.id) {
+        setSelectedElection({ ...selectedElection, status: payload.election_status });
+      }
+      formElement.reset();
+      setMessage(
+        `Tally verificado y publicado: ${payload.ballot_count} boletas. ` +
+        `Resultado ${payload.pilot_override ? "de piloto" : "oficial"}; ` +
+        `huella del artefacto ${payload.artifact_sha256.slice(0, 16)}…`,
+      );
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "No se pudo publicar el tally.");
+    } finally {
+      setTallyBusyId(null);
     }
   }
 
@@ -916,7 +985,28 @@ export function AdminOverview() {
                       </button>
                     </>
                   ) : election.status === "CLOSED" ? (
-                    <span className="form-message">Votación cerrada; escrutinio local pendiente</span>
+                    <form className="auth-form" onSubmit={(event) => void handlePublishTally(election, event)}>
+                      <span className="form-message">Votación cerrada; escrutinio firmado pendiente</span>
+                      <label htmlFor={`tally-artifact-${election.id}`}>Artefacto JSON firmado</label>
+                      <textarea
+                        id={`tally-artifact-${election.id}`}
+                        name="tally_artifact"
+                        rows={5}
+                        placeholder="Pega aquí la salida JSON de tally_encrypted_ballots.py"
+                        required
+                      />
+                      <label>
+                        <input type="checkbox" name="tally_pilot_override" />
+                        Publicar como resultado de piloto sin quórum oficial
+                      </label>
+                      <button
+                        className="button button-primary inline-button"
+                        type="submit"
+                        disabled={tallyBusyId === election.id}
+                      >
+                        {tallyBusyId === election.id ? "Verificando…" : "Verificar y publicar tally"}
+                      </button>
+                    </form>
                   ) : null}
                   {election.status === "REGISTRATION" || election.status === "FREEZE" ? (
                     <button

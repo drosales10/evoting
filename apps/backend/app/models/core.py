@@ -244,3 +244,32 @@ class AuditLog(CreatedAtMixin, Base):
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
     actor_id_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     details: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+
+class ElectionTally(CreatedAtMixin, Base):
+    __tablename__ = "election_tallies"
+    __table_args__ = (
+        UniqueConstraint("election_id", name="uq_election_tallies_election"),
+        Index("ix_election_tallies_organization", "organization_id", "election_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+    )
+    election_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("elections.id"),
+        nullable=False,
+    )
+    artifact_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    signature: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    eligible_member_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    voted_member_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    ballot_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    quorum_required: Mapped[int] = mapped_column(Integer, nullable=False)
+    quorum_met: Mapped[bool] = mapped_column(nullable=False)
+    pilot_override: Mapped[bool] = mapped_column(nullable=False, default=False)
