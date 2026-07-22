@@ -19,6 +19,7 @@ from app.models import (
     ElectoralPollingPlace,
     ElectoralRegion,
     ElectoralState,
+    Organization,
 )
 from app.services.geo_features import build_admin_feature_collection
 
@@ -60,7 +61,27 @@ class TerritoryUnitResponse(BaseModel):
     name: str
     geojson: dict[str, Any] | None = None
     parent_id: UUID | None = None
-    level: Literal["N2", "N3", "N4", "N5"]
+    level: Literal["N1", "N2", "N3", "N4", "N5"]
+
+
+@router.get("/territory/organization", response_model=TerritoryUnitResponse)
+async def get_organization_unit(
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> TerritoryUnitResponse:
+    """Return the N1 organization unit for the authenticated tenant."""
+    response.headers["Cache-Control"] = "no-store"
+    org = await session.scalar(select(Organization).where(Organization.id == claims.org_id))
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return TerritoryUnitResponse(
+        id=org.id,
+        code=org.slug,
+        name=org.name,
+        geojson=org.geojson,
+        level="N1",
+    )
 
 
 @router.get("/territory/regions", response_model=list[TerritoryUnitResponse])
@@ -322,7 +343,7 @@ async def create_polling_place(
 
 @router.put("/territory/{level}/{unit_id}/geojson")
 async def upsert_unit_geojson(
-    level: Literal["N2", "N3", "N4", "N5"],
+    level: Literal["N1", "N2", "N3", "N4", "N5"],
     unit_id: UUID,
     payload: dict[str, Any],
     response: Response,
@@ -330,6 +351,18 @@ async def upsert_unit_geojson(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> dict[str, str]:
     response.headers["Cache-Control"] = "no-store"
+    if level == "N1":
+        if unit_id != claims.org_id:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        org = await session.scalar(
+            select(Organization).where(Organization.id == claims.org_id)
+        )
+        if org is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        org.geojson = _coerce_stored_geojson(payload)
+        await session.commit()
+        return {"status": "updated", "level": level, "id": str(unit_id)}
+
     model_map = {
         "N2": ElectoralRegion,
         "N3": ElectoralState,
@@ -342,9 +375,37 @@ async def upsert_unit_geojson(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Territory unit not found")
-    row.geojson = payload
+    row.geojson = _coerce_stored_geojson(payload)
     await session.commit()
     return {"status": "updated", "level": level, "id": str(unit_id)}
+
+
+def _coerce_stored_geojson(payload: dict[str, Any]) -> dict[str, Any]:
+    """Prefer storing a single Feature so readers always find .geometry."""
+    geo_type = payload.get("type")
+    if geo_type == "Feature":
+        return payload
+    if geo_type == "FeatureCollection":
+        features = payload.get("features") or []
+        first = next((f for f in features if isinstance(f, dict) and f.get("geometry")), None)
+        if first:
+            return {
+                "type": "Feature",
+                "geometry": first["geometry"],
+                "properties": first.get("properties") or {},
+            }
+        return payload
+    if geo_type in {
+        "Point",
+        "MultiPoint",
+        "Polygon",
+        "MultiPolygon",
+        "LineString",
+        "MultiLineString",
+        "GeometryCollection",
+    }:
+        return {"type": "Feature", "geometry": payload, "properties": {}}
+    return payload
 
 
 @router.get("/geo/features")

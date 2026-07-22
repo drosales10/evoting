@@ -4,7 +4,7 @@ from uuid import UUID
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
@@ -254,6 +254,35 @@ async def list_public_elections(
         ) from exc
 
     return [PublicElection.model_validate(election) for election in elections]
+
+
+@router.get("/geo/territory/{election_id}")
+async def public_geo_territory(
+    election_id: UUID,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    levels: str = "N1,N2,N3,N4,N5",
+) -> dict:
+    """FeatureCollection territorial (sin PII) para una elección publicada."""
+    response.headers["Cache-Control"] = "no-store"
+    from app.services.geo_features import build_admin_feature_collection
+
+    election = await session.scalar(select(Election).where(Election.id == election_id))
+    if election is None or election.status not in {
+        "ACTIVE",
+        "CLOSED",
+        "TALLIED",
+        "FREEZE",
+        "REGISTRATION",
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Published election territory not found",
+        )
+    level_set = {part.strip().upper() for part in levels.split(",") if part.strip()}
+    return await build_admin_feature_collection(
+        session, election.organization_id, level_set or {"N2", "N3"}
+    )
 
 
 @router.get("/geo/results/{election_id}")

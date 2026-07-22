@@ -695,6 +695,8 @@ async def list_admin_members(
     limit: int = Query(default=25, ge=1, le=200),
     region_id: UUID | None = Query(default=None),
     state_id: UUID | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    alive: bool | None = Query(default=None),
     sort: str = Query(default="full_name"),
 ) -> AdminMemberListResponse:
     """List the administrative roster with search, filters and pagination."""
@@ -716,6 +718,10 @@ async def list_admin_members(
         filters.append(Member.region_id == region_id)
     if state_id:
         filters.append(Member.state_id == state_id)
+    if status_filter:
+        filters.append(Member.status == status_filter.strip().upper())
+    if alive is not None:
+        filters.append(Member.alive.is_(alive))
 
     total = int(
         (await session.execute(select(func.count(Member.id)).where(*filters))).scalar_one()

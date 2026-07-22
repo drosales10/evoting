@@ -20,9 +20,35 @@ from app.models import (
 )
 
 
+def _normalize_geometry(geojson: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract a drawable Geometry from Feature / FeatureCollection / Geometry."""
+    geo_type = geojson.get("type")
+    if not geo_type:
+        return None
+    if geo_type == "Feature":
+        geometry = geojson.get("geometry")
+        return geometry if isinstance(geometry, dict) and geometry.get("type") else None
+    if geo_type == "FeatureCollection":
+        features = geojson.get("features") or []
+        for feature in features:
+            if not isinstance(feature, dict):
+                continue
+            geometry = feature.get("geometry")
+            if isinstance(geometry, dict) and geometry.get("type"):
+                return geometry
+        return None
+    if geo_type == "GeometryCollection":
+        geometries = geojson.get("geometries") or []
+        for geometry in geometries:
+            if isinstance(geometry, dict) and geometry.get("type"):
+                return geometry
+        return None
+    # Already a Geometry object (Point, Polygon, MultiPolygon, …)
+    return geojson
+
+
 def _feature(level: str, entity_id: UUID, name: str, code: str, geojson: dict[str, Any] | None, props: dict[str, Any]) -> dict[str, Any] | None:
     if not geojson or "type" not in geojson:
-        # Placeholder bbox-less point skip — still emit with null geom for list UIs
         return {
             "type": "Feature",
             "geometry": None,
@@ -34,7 +60,7 @@ def _feature(level: str, entity_id: UUID, name: str, code: str, geojson: dict[st
                 **props,
             },
         }
-    geometry = geojson.get("geometry") if geojson.get("type") == "Feature" else geojson
+    geometry = _normalize_geometry(geojson)
     return {
         "type": "Feature",
         "geometry": geometry,
@@ -58,18 +84,9 @@ async def build_admin_feature_collection(
     if "N1" in levels:
         org = await session.scalar(select(Organization).where(Organization.id == organization_id))
         if org:
-            features.append(
-                {
-                    "type": "Feature",
-                    "geometry": None,
-                    "properties": {
-                        "level": "N1",
-                        "id": str(org.id),
-                        "code": org.slug,
-                        "name": org.name,
-                    },
-                }
-            )
+            feat = _feature("N1", org.id, org.name, org.slug, org.geojson, {})
+            if feat:
+                features.append(feat)
 
     if "N2" in levels:
         for row in (
@@ -179,19 +196,16 @@ async def build_public_results_collection(
         select(Organization).where(Organization.id == election.organization_id)
     )
     if org:
-        features.append(
-            {
-                "type": "Feature",
-                "geometry": None,
-                "properties": {
-                    "level": "N1",
-                    "id": str(org.id),
-                    "code": org.slug,
-                    "name": org.name,
-                    "election_id": str(election.id),
-                },
-            }
+        feat = _feature(
+            "N1",
+            org.id,
+            org.name,
+            org.slug,
+            org.geojson,
+            {"election_id": str(election.id)},
         )
+        if feat:
+            features.append(feat)
 
     regions = (
         await session.scalars(

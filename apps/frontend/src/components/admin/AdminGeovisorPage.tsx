@@ -17,13 +17,14 @@ const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export function AdminGeovisorPage() {
   const [data, setData] = useState<FeatureCollection | null>(null);
-  const [levels, setLevels] = useState("N2,N3,N4,N5");
+  const [levels, setLevels] = useState("N1,N2,N3,N4,N5");
   const [message, setMessage] = useState<string | null>(null);
+  const [organization, setOrganization] = useState<TerritoryUnit | null>(null);
   const [regions, setRegions] = useState<TerritoryUnit[]>([]);
   const [states, setStates] = useState<TerritoryUnit[]>([]);
   const [municipalities, setMunicipalities] = useState<TerritoryUnit[]>([]);
   const [pollingPlaces, setPollingPlaces] = useState<TerritoryUnit[]>([]);
-  const [importTarget, setImportTarget] = useState({ level: "N2", id: "" });
+  const [importTarget, setImportTarget] = useState({ level: "N1", id: "" });
 
   const load = useCallback(async () => {
     const response = await fetch(
@@ -44,12 +45,20 @@ export function AdminGeovisorPage() {
 
   useEffect(() => {
     void Promise.all([
+      fetch(`${apiUrl()}/api/v1/admin/territory/organization`, { credentials: "include" }),
       fetch(`${apiUrl()}/api/v1/admin/territory/regions`, { credentials: "include" }),
       fetch(`${apiUrl()}/api/v1/admin/territory/states`, { credentials: "include" }),
       fetch(`${apiUrl()}/api/v1/admin/territory/municipalities`, { credentials: "include" }),
       fetch(`${apiUrl()}/api/v1/admin/territory/polling-places`, { credentials: "include" }),
     ])
-      .then(async ([rRes, sRes, mRes, pRes]) => {
+      .then(async ([oRes, rRes, sRes, mRes, pRes]) => {
+        if (oRes.ok) {
+          const org = (await oRes.json()) as TerritoryUnit;
+          setOrganization(org);
+          setImportTarget((current) =>
+            current.level === "N1" && !current.id ? { level: "N1", id: org.id } : current,
+          );
+        }
         if (rRes.ok) setRegions((await rRes.json()) as TerritoryUnit[]);
         if (sRes.ok) setStates((await sRes.json()) as TerritoryUnit[]);
         if (mRes.ok) setMunicipalities((await mRes.json()) as TerritoryUnit[]);
@@ -57,6 +66,19 @@ export function AdminGeovisorPage() {
       })
       .catch(() => undefined);
   }, []);
+
+  const unitsForLevel =
+    importTarget.level === "N1"
+      ? organization
+        ? [organization]
+        : []
+      : importTarget.level === "N2"
+        ? regions
+        : importTarget.level === "N3"
+          ? states
+          : importTarget.level === "N4"
+            ? municipalities
+            : pollingPlaces;
 
   async function importGeojson(file: File) {
     if (!importTarget.id) {
@@ -85,7 +107,7 @@ export function AdminGeovisorPage() {
       setMessage(err.detail ?? "No se pudo importar el GeoJSON.");
       return;
     }
-    setMessage("GeoJSON importado.");
+    setMessage(`GeoJSON importado en ${importTarget.level}.`);
     await load();
   }
 
@@ -99,7 +121,7 @@ export function AdminGeovisorPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {["N2,N3", "N2,N3,N4", "N2,N3,N4,N5", "N1,N2,N3,N4,N5"].map((preset) => (
+          {["N1,N2,N3", "N2,N3", "N2,N3,N4", "N2,N3,N4,N5", "N1,N2,N3,N4,N5"].map((preset) => (
             <button
               key={preset}
               type="button"
@@ -116,8 +138,14 @@ export function AdminGeovisorPage() {
             <select
               className="input-field mt-1"
               value={importTarget.level}
-              onChange={(e) => setImportTarget({ level: e.target.value, id: "" })}
+              onChange={(e) => {
+                const level = e.target.value;
+                const nextId =
+                  level === "N1" && organization ? organization.id : "";
+                setImportTarget({ level, id: nextId });
+              }}
             >
+              <option value="N1">N1 Organización</option>
               <option value="N2">N2 Región</option>
               <option value="N3">N3 Estado</option>
               <option value="N4">N4 Municipio</option>
@@ -132,15 +160,7 @@ export function AdminGeovisorPage() {
               onChange={(e) => setImportTarget({ ...importTarget, id: e.target.value })}
             >
               <option value="">Seleccionar…</option>
-              {(
-                importTarget.level === "N2"
-                  ? regions
-                  : importTarget.level === "N3"
-                    ? states
-                    : importTarget.level === "N4"
-                      ? municipalities
-                      : pollingPlaces
-              ).map((unit) => (
+              {unitsForLevel.map((unit) => (
                 <option key={unit.id} value={unit.id}>
                   {unit.name} ({unit.code})
                 </option>
@@ -165,8 +185,7 @@ export function AdminGeovisorPage() {
           <AdminMapCanvas data={data} />
         </div>
         <p className="text-xs text-[var(--muted)]">
-          Features: {data?.features.length ?? 0}. También puedes usar PUT
-          /api/v1/admin/territory/{"{level}"}/{"{id}"}/geojson
+          Features: {data?.features.length ?? 0}. N1 usa la geometría de la organización actual.
         </p>
       </div>
     </DashboardShell>

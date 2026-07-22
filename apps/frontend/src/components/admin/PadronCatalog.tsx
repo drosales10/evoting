@@ -35,6 +35,8 @@ export function PadronCatalog() {
   const [query, setQuery] = useState("");
   const [regionId, setRegionId] = useState("");
   const [stateId, setStateId] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [aliveFilter, setAliveFilter] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<MemberList | null>(null);
   const [regions, setRegions] = useState<TerritoryUnit[]>([]);
@@ -63,6 +65,8 @@ export function PadronCatalog() {
       if (query.trim()) params.set("q", query.trim());
       if (regionId) params.set("region_id", regionId);
       if (stateId) params.set("state_id", stateId);
+      if (statusFilter) params.set("status", statusFilter);
+      if (aliveFilter === "true" || aliveFilter === "false") params.set("alive", aliveFilter);
       const response = await fetch(`${apiUrl()}/api/v1/admin/members?${params}`, {
         credentials: "include",
         cache: "no-store",
@@ -79,7 +83,7 @@ export function PadronCatalog() {
     } finally {
       setBusy(false);
     }
-  }, [page, query, regionId, stateId]);
+  }, [page, query, regionId, stateId, statusFilter, aliveFilter]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -232,6 +236,36 @@ export function PadronCatalog() {
                   {s.name}
                 </option>
               ))}
+            </select>
+          </label>
+          <label className="min-w-[140px] text-sm font-bold">
+            Estatus
+            <select
+              className="input-field mt-1"
+              value={statusFilter}
+              onChange={(e) => {
+                setPage(1);
+                setStatusFilter(e.target.value);
+              }}
+            >
+              <option value="">Todos</option>
+              <option value="ACTIVE">Activo</option>
+              <option value="INACTIVE">Inactivo</option>
+            </select>
+          </label>
+          <label className="min-w-[120px] text-sm font-bold">
+            Vivo
+            <select
+              className="input-field mt-1"
+              value={aliveFilter}
+              onChange={(e) => {
+                setPage(1);
+                setAliveFilter(e.target.value);
+              }}
+            >
+              <option value="">Todos</option>
+              <option value="true">Sí</option>
+              <option value="false">No</option>
             </select>
           </label>
           <a className="btn btn-secondary" href={`${apiUrl()}/api/v1/admin/members/export`}>

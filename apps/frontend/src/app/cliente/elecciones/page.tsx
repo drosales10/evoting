@@ -15,21 +15,27 @@ export default async function ClienteEleccionesPage() {
           <p className="card-panel text-sm text-[var(--muted)]">No hay elecciones publicadas.</p>
         ) : (
           elections.map((election) => (
-            <div key={election.id} className="card-panel flex flex-wrap items-center justify-between gap-3">
+            <div
+              key={election.id}
+              className="card-panel flex flex-wrap items-center justify-between gap-3"
+            >
               <div>
                 <p className="font-semibold">{election.title}</p>
                 <p className="text-sm text-[var(--muted)]">{election.status}</p>
               </div>
-              {election.status === "TALLIED" ? (
-                <div className="flex gap-2">
-                  <Link className="btn btn-secondary" href={`/elections/${election.id}/results`}>
+              <div className="flex gap-2">
+                {election.status === "TALLIED" ? (
+                  <Link
+                    className="btn btn-secondary"
+                    href={`/cliente/resultados/${election.id}`}
+                  >
                     Resultados
                   </Link>
-                  <Link className="btn btn-primary" href={`/cliente/geovisor`}>
-                    Mapa
-                  </Link>
-                </div>
-              ) : null}
+                ) : null}
+                <Link className="btn btn-primary" href="/cliente/geovisor">
+                  Mapa
+                </Link>
+              </div>
             </div>
           ))
         )}

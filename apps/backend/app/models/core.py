@@ -39,6 +39,7 @@ class Organization(CreatedAtMixin, Base):
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    geojson: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
 
 class Member(CreatedAtMixin, Base):

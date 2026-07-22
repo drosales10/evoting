@@ -18,11 +18,17 @@ export default async function ClienteResultadosPage() {
           <p className="card-panel text-sm text-[var(--muted)]">Aún no hay resultados oficiales.</p>
         ) : (
           tallied.map((election) => (
-            <div key={election.id} className="card-panel flex flex-wrap items-center justify-between gap-3">
+            <div
+              key={election.id}
+              className="card-panel flex flex-wrap items-center justify-between gap-3"
+            >
               <p className="font-semibold">{election.title}</p>
               <div className="flex gap-2">
-                <Link className="btn btn-secondary" href={`/elections/${election.id}/results`}>
-                  Verificar
+                <Link
+                  className="btn btn-secondary"
+                  href={`/cliente/resultados/${election.id}`}
+                >
+                  Ver detalle
                 </Link>
                 <Link className="btn btn-primary" href="/cliente/geovisor">
                   Geovisor
