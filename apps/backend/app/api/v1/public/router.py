@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_db_session
+from app.db.session import get_db_session, get_session_factory
 from app.models import Election, ElectionBroadcast, ElectionTally
 from app.repositories.elections import PublicElectionRepository
 from app.services.tally_artifact import artifact_sha256, verify_artifact
@@ -211,36 +211,38 @@ async def get_public_election_results(
 async def verify_public_artifact(
     artifact_hash: str,
     response: Response,
-    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> PublicVerifyResponse:
     """Independent verification surface keyed by artifact SHA-256."""
     response.headers["Cache-Control"] = "no-store"
+    # Validate before opening a DB session so CI/smoke checks work without DATABASE_URL.
     if len(artifact_hash) != 64:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid hash")
-    election, tally = await _load_official_tally(session, artifact_hash=artifact_hash)
-    try:
-        artifact_model, hash_matches, signature_valid = _verify_tally(election, tally)
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Artifact verification failed",
-        ) from exc
-    return PublicVerifyResponse(
-        artifact_hash=tally.artifact_sha256,
-        election_id=election.id,
-        title=election.title,
-        verification=PublicTallyVerification(
-            artifact_sha256_matches=hash_matches,
-            signature_valid=signature_valid,
-        ),
-        ballot_count=tally.ballot_count,
-        quorum_met=tally.quorum_met,
-        counts=artifact_model.counts,
-        public_key=_signing_or_public_pem(election),
-        signature=tally.signature,
-        artifact=tally.artifact,
-        download_path=f"/api/v1/public/verify/{tally.artifact_sha256}/artifact",
-    )
+
+    async with get_session_factory()() as session:
+        election, tally = await _load_official_tally(session, artifact_hash=artifact_hash)
+        try:
+            artifact_model, hash_matches, signature_valid = _verify_tally(election, tally)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Artifact verification failed",
+            ) from exc
+        return PublicVerifyResponse(
+            artifact_hash=tally.artifact_sha256,
+            election_id=election.id,
+            title=election.title,
+            verification=PublicTallyVerification(
+                artifact_sha256_matches=hash_matches,
+                signature_valid=signature_valid,
+            ),
+            ballot_count=tally.ballot_count,
+            quorum_met=tally.quorum_met,
+            counts=artifact_model.counts,
+            public_key=_signing_or_public_pem(election),
+            signature=tally.signature,
+            artifact=tally.artifact,
+            download_path=f"/api/v1/public/verify/{tally.artifact_sha256}/artifact",
+        )
 
 
 @router.get("/verify/{artifact_hash}/artifact")
