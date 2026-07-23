@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 const CLIENT_NAV = [
   { href: "/cliente", label: "Inicio" },
   { href: "/cliente/elecciones", label: "Elecciones" },
+  { href: "/cliente/ceremonia", label: "Ceremonia" },
   { href: "/cliente/resultados", label: "Resultados" },
   { href: "/cliente/geovisor", label: "Geovisor" },
   { href: "/vote/login", label: "Votar" },

@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { CeremonyPublicSection } from "@/components/ceremony/CeremonyPublicSection";
 import { getPublicElectionResult } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -18,8 +19,9 @@ export default async function ClienteResultadoDetallePage({ params }: PageProps)
         <h1 className="text-3xl font-semibold">Resultados no disponibles</h1>
         <p className="text-[var(--muted)]">
           No hay un resultado oficial publicado para esta elección (o el tally es de piloto sin
-          quórum).
+          quórum). Puedes seguir la ceremonia si está anunciada.
         </p>
+        <CeremonyPublicSection electionId={electionId} />
         <div className="flex flex-wrap gap-2">
           <Link className="btn btn-secondary" href="/cliente/resultados">
             Volver
@@ -43,6 +45,8 @@ export default async function ClienteResultadoDetallePage({ params }: PageProps)
           Escrutinio agregado verificado. Boletas válidas: {result.ballot_count}.
         </p>
       </div>
+
+      <CeremonyPublicSection electionId={electionId} />
 
       <section className="card-panel space-y-3">
         <h2 className="text-lg font-semibold">Conteos por plancha</h2>

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
+import { CeremonyAdminPanel } from "@/components/admin/CeremonyAdminPanel";
 import { DashboardShell } from "@/components/admin/DashboardShell";
 import { AdminOverview } from "@/components/admin/admin-overview";
 
@@ -28,10 +29,24 @@ export function ElectionsManager() {
   const [stateId, setStateId] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [ceremonyElectionId, setCeremonyElectionId] = useState("");
 
   const statesForRegion = useMemo(
     () => states.filter((s) => !regionId || s.parent_id === regionId),
     [states, regionId],
+  );
+
+  const ceremonyElection = useMemo(
+    () => elections.find((e) => e.id === ceremonyElectionId) ?? null,
+    [elections, ceremonyElectionId],
+  );
+
+  const ceremonyCandidates = useMemo(
+    () =>
+      elections.filter((e) =>
+        ["REGISTRATION", "FREEZE", "ACTIVE", "CLOSED", "TALLIED"].includes(e.status),
+      ),
+    [elections],
   );
 
   async function load() {
@@ -42,7 +57,21 @@ export function ElectionsManager() {
     ]);
     if (rRes.ok) setRegions((await rRes.json()) as TerritoryUnit[]);
     if (sRes.ok) setStates((await sRes.json()) as TerritoryUnit[]);
-    if (eRes.ok) setElections((await eRes.json()) as Election[]);
+    if (eRes.ok) {
+      const list = (await eRes.json()) as Election[];
+      setElections(list);
+      setCeremonyElectionId((current) => {
+        if (current && list.some((e) => e.id === current)) return current;
+        const preferred =
+          list.find((e) => e.status === "CLOSED") ??
+          list.find((e) => e.status === "ACTIVE") ??
+          list.find((e) => e.status === "TALLIED") ??
+          list.find((e) =>
+            ["REGISTRATION", "FREEZE", "ACTIVE", "CLOSED", "TALLIED"].includes(e.status),
+          );
+        return preferred?.id ?? "";
+      });
+    }
   }
 
   useEffect(() => {
@@ -104,14 +133,63 @@ export function ElectionsManager() {
     <DashboardShell>
       <div className="space-y-8">
         <div>
-          <h2 className="text-xl font-semibold">Elecciones por alcance territorial</h2>
+          <h2 className="text-xl font-semibold">Elecciones</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            NATIONAL (toda la org), REGIONAL (N2) o STATE (N3). Al abrir registro, el snapshot se
-            filtra por el territorio de la elección.
+            Alcance territorial, ciclo electoral y ceremonia de escrutinio en YouTube.
           </p>
         </div>
 
-        <form className="grid gap-3 rounded-xl border border-[var(--line)] p-4 md:grid-cols-2" onSubmit={(e) => void handleCreate(e)}>
+        <section
+          id="ceremonia-escrutinio"
+          className="scroll-mt-6 space-y-4 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5"
+        >
+          <div>
+            <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--primary)]">
+              Portal público
+            </p>
+            <h3 className="mt-1 text-lg font-semibold">Ceremonia de escrutinio (YouTube)</h3>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Configura aquí el live que verán miembros y público en el geovisor cliente (drawer
+              Ceremonia) y en resultados.
+            </p>
+          </div>
+
+          {ceremonyCandidates.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-[var(--line)] px-4 py-6 text-sm text-[var(--muted)]">
+              No hay elecciones listas para ceremonia. Crea una y ábrela al menos en registro.
+            </p>
+          ) : (
+            <>
+              <label className="block max-w-xl text-sm font-bold">
+                Elección
+                <select
+                  className="input-field mt-1"
+                  value={ceremonyElectionId}
+                  onChange={(e) => setCeremonyElectionId(e.target.value)}
+                >
+                  <option value="">Selecciona una elección</option>
+                  {ceremonyCandidates.map((election) => (
+                    <option key={election.id} value={election.id}>
+                      {election.title} · {election.status}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {ceremonyElection ? (
+                <CeremonyAdminPanel
+                  electionId={ceremonyElection.id}
+                  electionTitle={ceremonyElection.title}
+                />
+              ) : null}
+            </>
+          )}
+        </section>
+
+        <form
+          className="grid gap-3 rounded-xl border border-[var(--line)] p-4 md:grid-cols-2"
+          onSubmit={(e) => void handleCreate(e)}
+        >
+          <p className="text-sm font-bold md:col-span-2">Crear elección DRAFT</p>
           <label className="text-sm font-bold md:col-span-2">
             Título
             <input className="input-field mt-1" name="title" minLength={3} required />
@@ -209,6 +287,22 @@ export function ElectionsManager() {
                     <li key={election.id} className="border-b border-[var(--line)] py-2">
                       <p className="font-semibold">{election.title}</p>
                       <p className="text-xs text-[var(--muted)]">{election.status}</p>
+                      {["REGISTRATION", "FREEZE", "ACTIVE", "CLOSED", "TALLIED"].includes(
+                        election.status,
+                      ) ? (
+                        <button
+                          type="button"
+                          className="mt-1 text-xs font-bold text-[var(--primary)] underline"
+                          onClick={() => {
+                            setCeremonyElectionId(election.id);
+                            document
+                              .getElementById("ceremonia-escrutinio")
+                              ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                          }}
+                        >
+                          Configurar ceremonia
+                        </button>
+                      ) : null}
                     </li>
                   ))
                 )}
@@ -220,7 +314,8 @@ export function ElectionsManager() {
         <div className="border-t border-[var(--line)] pt-6">
           <h3 className="text-lg font-semibold">Ciclo electoral (registro → escrutinio)</h3>
           <p className="mb-4 mt-1 text-sm text-[var(--muted)]">
-            Usa las acciones por elección para abrir registro, congelar, activar y cerrar.
+            Abrir registro, congelar, activar, cerrar y publicar tally. La transmisión YouTube se
+            gestiona arriba en <a className="underline" href="#ceremonia-escrutinio">Ceremonia</a>.
           </p>
           <AdminOverview focus="elections" />
         </div>

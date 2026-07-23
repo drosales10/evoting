@@ -645,6 +645,25 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
       return;
     }
     try {
+      const readinessResponse = await fetch(
+        `${apiUrl}/api/v1/admin/elections/${election.id}/tally-readiness`,
+        { credentials: "include", cache: "no-store" },
+      );
+      if (readinessResponse.ok) {
+        const readiness = (await readinessResponse.json()) as {
+          key_compare_warning?: string | null;
+          has_key_compare_milestone?: boolean;
+        };
+        if (readiness.key_compare_warning || readiness.has_key_compare_milestone === false) {
+          const confirmed = window.confirm(
+            `${readiness.key_compare_warning ?? "Falta el hito de comparación de claves en el live."}\n\n¿Publicar de todos modos?`,
+          );
+          if (!confirmed) {
+            setTallyBusyId(null);
+            return;
+          }
+        }
+      }
       const parsed = JSON.parse(rawArtifact) as {
         artifact?: Record<string, unknown>;
         signature?: string;
@@ -1121,6 +1140,19 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
                       </button>
                     </form>
                   ) : null}
+                  {(focus === "elections" &&
+                    (election.status === "ACTIVE" ||
+                      election.status === "CLOSED" ||
+                      election.status === "TALLIED" ||
+                      election.status === "REGISTRATION" ||
+                      election.status === "FREEZE")) && (
+                    <a
+                      className="button button-secondary inline-button"
+                      href="#ceremonia-escrutinio"
+                    >
+                      Ir a Ceremonia YouTube
+                    </a>
+                  )}
                   {election.status === "REGISTRATION" || election.status === "FREEZE" ? (
                     <button
                       className="button button-secondary inline-button"

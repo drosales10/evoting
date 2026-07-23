@@ -12,9 +12,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
-from app.models import Election, ElectionTally
+from app.models import Election, ElectionBroadcast, ElectionTally
 from app.repositories.elections import PublicElectionRepository
 from app.services.tally_artifact import artifact_sha256, verify_artifact
+from app.services.youtube import youtube_embed_url
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -28,6 +29,34 @@ class PublicElection(BaseModel):
     start_time: datetime
     end_time: datetime
     status: str
+    broadcast_status: str | None = None
+    has_live: bool = False
+
+
+class PublicBroadcastMilestone(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: str
+    label: str
+    at: datetime
+    note: str | None = None
+
+
+class PublicBroadcastResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    election_id: UUID
+    title: str
+    description: str | None
+    status: str
+    youtube_url: str
+    embed_url: str
+    scheduled_start_at: datetime | None
+    went_live_at: datetime | None
+    ended_at: datetime | None
+    artifact_sha256: str | None
+    verify_path: str | None
+    milestones: list[PublicBroadcastMilestone]
 
 
 class PublicTallyCount(BaseModel):
@@ -253,7 +282,83 @@ async def list_public_elections(
             detail="Public election data is temporarily unavailable",
         ) from exc
 
-    return [PublicElection.model_validate(election) for election in elections]
+    election_ids = [election.id for election in elections]
+    broadcasts: dict[UUID, ElectionBroadcast] = {}
+    if election_ids:
+        rows = (
+            await session.scalars(
+                select(ElectionBroadcast).where(ElectionBroadcast.election_id.in_(election_ids))
+            )
+        ).all()
+        broadcasts = {row.election_id: row for row in rows}
+
+    items: list[PublicElection] = []
+    for election in elections:
+        broadcast = broadcasts.get(election.id)
+        base = PublicElection.model_validate(election)
+        if broadcast is None:
+            items.append(base)
+            continue
+        items.append(
+            base.model_copy(
+                update={
+                    "broadcast_status": broadcast.status,
+                    "has_live": broadcast.status == "LIVE",
+                }
+            )
+        )
+    return items
+
+
+@router.get("/elections/{election_id}/broadcast", response_model=PublicBroadcastResponse)
+async def get_public_election_broadcast(
+    election_id: UUID,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> PublicBroadcastResponse:
+    """Return ceremony broadcast metadata for the public portal."""
+    response.headers["Cache-Control"] = "no-store"
+    election = await session.scalar(select(Election).where(Election.id == election_id))
+    if election is None or election.status not in {
+        "REGISTRATION",
+        "FREEZE",
+        "ACTIVE",
+        "CLOSED",
+        "TALLIED",
+    }:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Election not found")
+    row = await session.scalar(
+        select(ElectionBroadcast).where(ElectionBroadcast.election_id == election_id)
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Broadcast not found")
+
+    milestones: list[PublicBroadcastMilestone] = []
+    raw = row.milestones if isinstance(row.milestones, list) else []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            milestones.append(PublicBroadcastMilestone.model_validate(entry))
+        except Exception:
+            continue
+
+    return PublicBroadcastResponse(
+        election_id=election_id,
+        title=row.title,
+        description=row.description,
+        status=row.status,
+        youtube_url=row.youtube_url,
+        embed_url=youtube_embed_url(row.youtube_video_id),
+        scheduled_start_at=row.scheduled_start_at,
+        went_live_at=row.went_live_at,
+        ended_at=row.ended_at,
+        artifact_sha256=row.artifact_sha256,
+        verify_path=(
+            f"/verify/{row.artifact_sha256}" if row.artifact_sha256 else None
+        ),
+        milestones=milestones,
+    )
 
 
 @router.get("/geo/territory/{election_id}")

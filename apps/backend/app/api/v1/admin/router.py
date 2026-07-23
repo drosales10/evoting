@@ -35,6 +35,7 @@ from app.models import (
     AuditLog,
     Candidate,
     Election,
+    ElectionBroadcast,
     ElectionTally,
     ElectionTallyProposal,
     ElectoralMunicipality,
@@ -412,6 +413,9 @@ class AdminTallyReadinessResponse(BaseModel):
     requires_offline_private_key: bool
     zkp_verification_available: bool
     can_mark_tallied: bool
+    broadcast_status: str | None = None
+    has_key_compare_milestone: bool = False
+    key_compare_warning: str | None = None
 
 
 class AdminTallyCount(BaseModel):
@@ -1803,6 +1807,21 @@ async def close_election(
 
     closed_at = datetime.now(UTC)
     election.status = "CLOSED"
+    broadcast = await session.scalar(
+        select(ElectionBroadcast).where(
+            ElectionBroadcast.election_id == election.id,
+            ElectionBroadcast.organization_id == claims.org_id,
+        )
+    )
+    if broadcast is not None:
+        from app.api.v1.admin.broadcast_router import append_milestone
+
+        append_milestone(
+            broadcast,
+            milestone_type="CLOSE",
+            note=payload.reason or "Cierre de votación",
+            at=closed_at,
+        )
     await append_audit_event(
         session,
         organization_id=claims.org_id,
@@ -1864,6 +1883,27 @@ async def get_tally_readiness(
         if election.public_key
         else None
     )
+    broadcast = await session.scalar(
+        select(ElectionBroadcast).where(
+            ElectionBroadcast.election_id == election.id,
+            ElectionBroadcast.organization_id == claims.org_id,
+        )
+    )
+    has_key_compare = False
+    broadcast_status: str | None = None
+    if broadcast is not None:
+        broadcast_status = broadcast.status
+        milestones = broadcast.milestones if isinstance(broadcast.milestones, list) else []
+        has_key_compare = any(
+            isinstance(m, dict) and m.get("type") == "KEY_COMPARE" for m in milestones
+        )
+    warning: str | None = None
+    if election.status == "CLOSED" and not has_key_compare:
+        warning = (
+            "No hay hito de comparación de claves en la transmisión. "
+            "Ese proceso ocurre fuera del sistema; se recomienda registrarlo en el live "
+            "antes de publicar (solo advertencia)."
+        )
     return AdminTallyReadinessResponse(
         election_id=election.id,
         election_status=cast(ElectionStatus, election.status),
@@ -1877,6 +1917,9 @@ async def get_tally_readiness(
         requires_offline_private_key=True,
         zkp_verification_available=settings.zkp_verification_enabled,
         can_mark_tallied=election.status == "CLOSED",
+        broadcast_status=broadcast_status,
+        has_key_compare_milestone=has_key_compare,
+        key_compare_warning=warning,
     )
 
 
@@ -2155,6 +2198,29 @@ async def publish_tally(
     )
     session.add(tally)
     election.status = "TALLIED"
+    broadcast = await session.scalar(
+        select(ElectionBroadcast).where(
+            ElectionBroadcast.election_id == election.id,
+            ElectionBroadcast.organization_id == claims.org_id,
+        )
+    )
+    if broadcast is not None:
+        from app.api.v1.admin.broadcast_router import append_milestone
+
+        broadcast.artifact_sha256 = tally.artifact_sha256
+        append_milestone(
+            broadcast,
+            milestone_type="PUBLISH",
+            note="Resultados oficiales publicados en el portal",
+            at=published_at,
+        )
+        if not payload.pilot_override and quorum_met:
+            append_milestone(
+                broadcast,
+                milestone_type="GEO_ACTIVE",
+                note="Participación oficial disponible en geovisor cliente",
+                at=published_at,
+            )
     await append_audit_event(
         session,
         organization_id=claims.org_id,

@@ -12,6 +12,8 @@ export type PublicElection = {
   start_time: string;
   end_time: string;
   status: ElectionStatus;
+  broadcast_status?: string | null;
+  has_live?: boolean;
 };
 
 export type PublicTallyCount = {

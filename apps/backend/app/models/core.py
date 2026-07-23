@@ -449,3 +449,44 @@ class ElectoralPollingPlace(CreatedAtMixin, Base):
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     geojson: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+
+class ElectionBroadcast(CreatedAtMixin, Base):
+    """One YouTube ceremony stream per election (close → keys → publish)."""
+
+    __tablename__ = "election_broadcasts"
+    __table_args__ = (
+        UniqueConstraint("election_id", name="uq_election_broadcasts_election"),
+        Index("ix_election_broadcasts_organization", "organization_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+    )
+    election_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("elections.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    youtube_url: Mapped[str] = mapped_column(Text, nullable=False)
+    youtube_video_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="SCHEDULED")
+    scheduled_start_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    went_live_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    artifact_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    milestones: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )

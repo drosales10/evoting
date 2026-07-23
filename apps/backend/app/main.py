@@ -7,6 +7,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.api.v1.admin.broadcast_router import router as broadcast_router
 from app.api.v1.admin.router import router as admin_router
 from app.api.v1.admin.territory_router import router as territory_router
 from app.api.v1.auth.router import router as auth_router
@@ -51,6 +52,7 @@ async def enforce_https(request: Request, call_next):  # type: ignore[no-untyped
 
 
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(broadcast_router, prefix="/api/v1")
 app.include_router(territory_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(public_router, prefix="/api/v1")

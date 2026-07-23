@@ -5,12 +5,20 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { FeatureCollection } from "geojson";
 
+import { CeremonyDrawer } from "@/components/ceremony/CeremonyDrawer";
+
 const ClientMapView = dynamic(
   () => import("@/components/client/geovisor/ClientMapView").then((m) => m.ClientMapView),
   { ssr: false, loading: () => <p className="text-[var(--muted)]">Cargando geovisor…</p> },
 );
 
-type Election = { id: string; title: string; status: string };
+type Election = {
+  id: string;
+  title: string;
+  status: string;
+  has_live?: boolean;
+  broadcast_status?: string | null;
+};
 
 function mergeCollections(
   territory: FeatureCollection | null,
@@ -57,8 +65,11 @@ export function ClienteGeovisorClient({
         const list = (await r.json()) as Election[];
         setElections(list);
         const preferred =
+          list.find((e) => e.has_live) ??
+          list.find((e) => e.broadcast_status === "SCHEDULED" || e.broadcast_status === "ENDED") ??
           list.find((e) => e.status === "TALLIED") ??
           list.find((e) => e.status === "ACTIVE") ??
+          list.find((e) => e.status === "CLOSED") ??
           list[0];
         if (preferred) setElectionId(preferred.id);
       })
@@ -116,7 +127,8 @@ export function ClienteGeovisorClient({
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Geovisor de resultados</h1>
         <p className="mt-2 max-w-2xl text-[var(--muted)]">
-          Capas N1–N5 (DeckGL + Mapbox). La participación aparece cuando existe un tally oficial.
+          Capas N1–N5 (DeckGL + Mapbox). Usa el botón <strong>Ceremonia</strong> para ver el live
+          de YouTube del escrutinio.
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-3">
@@ -128,13 +140,18 @@ export function ClienteGeovisorClient({
           <option value="">Selecciona elección</option>
           {elections.map((e) => (
             <option key={e.id} value={e.id}>
-              {e.title} ({e.status})
+              {e.title} ({e.status}
+              {e.has_live ? " · EN VIVO" : e.broadcast_status ? " · Ceremonia" : ""})
             </option>
           ))}
         </select>
+        <Link className="btn btn-secondary" href="/cliente/ceremonia">
+          Página Ceremonia
+        </Link>
         <Link className="btn btn-secondary" href="/cliente/resultados">
           Ver listado
         </Link>
+        {electionId ? <CeremonyDrawer electionId={electionId} /> : null}
       </div>
       {error ? <p className="text-sm text-amber-400">{error}</p> : null}
       {info ? <p className="text-sm text-[var(--muted)]">{info}</p> : null}
