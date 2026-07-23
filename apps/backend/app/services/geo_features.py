@@ -47,7 +47,14 @@ def _normalize_geometry(geojson: dict[str, Any]) -> dict[str, Any] | None:
     return geojson
 
 
-def _feature(level: str, entity_id: UUID, name: str, code: str, geojson: dict[str, Any] | None, props: dict[str, Any]) -> dict[str, Any] | None:
+def _feature(
+    level: str,
+    entity_id: UUID,
+    name: str,
+    code: str,
+    geojson: dict[str, Any] | None,
+    props: dict[str, Any],
+) -> dict[str, Any] | None:
     if not geojson or "type" not in geojson:
         return {
             "type": "Feature",

@@ -391,7 +391,9 @@ async def refresh_admin_session(
 
     roles = list(
         await session.scalars(
-            select(AdminUserRole.role).where(AdminUserRole.admin_user_id == auth_session.principal_id)
+            select(AdminUserRole.role).where(
+                AdminUserRole.admin_user_id == auth_session.principal_id
+            )
         )
     )
     access, refresh, csrf = await _rotate_session(

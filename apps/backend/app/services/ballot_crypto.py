@@ -85,7 +85,7 @@ def verify_proof_at_cast(
     if proof["slate_set_hash"].lower() != slate_set_hash.lower():
         raise BallotCryptoError("zkp_proof slate_set_hash does not match election")
     expected_binding = hashlib.sha256(
-        f"{encrypted_payload}:{proof['commitment']}".encode("utf-8")
+        f"{encrypted_payload}:{proof['commitment']}".encode()
     ).hexdigest()
     if expected_binding != proof["payload_binding"].lower():
         raise BallotCryptoError("zkp_proof payload_binding mismatch")
@@ -104,11 +104,11 @@ def verify_proof_after_decrypt(
     if is_development_stub_proof(zkp_proof):
         raise BallotCryptoError("development stub proof cannot pass audited verification")
     proof = parse_integrity_proof(zkp_proof)
-    expected_commitment = hashlib.sha256(f"{slate_id}:{nonce}".encode("utf-8")).hexdigest()
+    expected_commitment = hashlib.sha256(f"{slate_id}:{nonce}".encode()).hexdigest()
     if expected_commitment != proof["commitment"].lower():
         raise BallotCryptoError("zkp_proof commitment does not match decrypted selection")
     expected_binding = hashlib.sha256(
-        f"{encrypted_payload}:{proof['commitment']}".encode("utf-8")
+        f"{encrypted_payload}:{proof['commitment']}".encode()
     ).hexdigest()
     if expected_binding != proof["payload_binding"].lower():
         raise BallotCryptoError("zkp_proof payload_binding mismatch after decrypt")

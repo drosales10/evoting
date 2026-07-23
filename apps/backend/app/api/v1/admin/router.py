@@ -674,7 +674,10 @@ async def _resolve_member_territory(
             )
         )
         if region is None:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid region_id")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid region_id",
+            )
         region_label = region.name
 
     state: ElectoralState | None = None
@@ -686,7 +689,10 @@ async def _resolve_member_territory(
             )
         )
         if state is None:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid state_id")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid state_id",
+            )
         if resolved_region_id is not None and state.region_id != resolved_region_id:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -926,8 +932,8 @@ async def list_admin_members(
     q: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=25, ge=1, le=200),
-    region_id: UUID | None = Query(default=None),
-    state_id: UUID | None = Query(default=None),
+    region_id: Annotated[UUID | None, Query()] = None,
+    state_id: Annotated[UUID | None, Query()] = None,
     status_filter: str | None = Query(default=None, alias="status"),
     alive: bool | None = Query(default=None),
     sort: str = Query(default="full_name"),

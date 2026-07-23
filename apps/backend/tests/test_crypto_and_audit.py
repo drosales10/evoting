@@ -15,8 +15,8 @@ from app.services.ballot_crypto import (
     encode_integrity_proof,
     parse_encrypted_payload,
     slate_set_hash,
-    verify_proof_at_cast,
     verify_proof_after_decrypt,
+    verify_proof_at_cast,
 )
 from app.services.tally_acta import build_official_acta
 from app.services.tally_artifact import artifact_sha256, sign_artifact, verify_artifact
@@ -42,7 +42,13 @@ def test_parse_encrypted_payload_accepts_structure() -> None:
 def test_integrity_proof_roundtrip() -> None:
     slate_id = str(uuid4())
     nonce = "abc123"
-    encrypted = '{"algorithm":"RSA-OAEP-256/AES-256-GCM","wrapped_key":"YWJjZGVmZ2hpamtsbW5vcA","iv":"YWJjZGVmZ2hpamts","ciphertext":"YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo","key_version":"v1"}'
+    encrypted = (
+        '{"algorithm":"RSA-OAEP-256/AES-256-GCM",'
+        '"wrapped_key":"YWJjZGVmZ2hpamtsbW5vcA",'
+        '"iv":"YWJjZGVmZ2hpamts",'
+        '"ciphertext":"YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo",'
+        '"key_version":"v1"}'
+    )
     commitment = hashlib.sha256(f"{slate_id}:{nonce}".encode()).hexdigest()
     binding = hashlib.sha256(f"{encrypted}:{commitment}".encode()).hexdigest()
     set_hash = slate_set_hash([slate_id, str(uuid4())])

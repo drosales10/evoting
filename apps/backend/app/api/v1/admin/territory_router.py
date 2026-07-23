@@ -138,7 +138,7 @@ async def list_states(
     response: Response,
     claims: Annotated[AccessClaims, Depends(_require_election_manager)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
-    region_id: UUID | None = Query(default=None),
+    region_id: Annotated[UUID | None, Query()] = None,
 ) -> list[TerritoryUnitResponse]:
     response.headers["Cache-Control"] = "no-store"
     statement = select(ElectoralState).where(ElectoralState.organization_id == claims.org_id)
@@ -206,7 +206,7 @@ async def list_municipalities(
     response: Response,
     claims: Annotated[AccessClaims, Depends(_require_election_manager)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
-    state_id: UUID | None = Query(default=None),
+    state_id: Annotated[UUID | None, Query()] = None,
 ) -> list[TerritoryUnitResponse]:
     response.headers["Cache-Control"] = "no-store"
     statement = select(ElectoralMunicipality).where(
@@ -276,7 +276,7 @@ async def list_polling_places(
     response: Response,
     claims: Annotated[AccessClaims, Depends(_require_election_manager)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
-    municipality_id: UUID | None = Query(default=None),
+    municipality_id: Annotated[UUID | None, Query()] = None,
 ) -> list[TerritoryUnitResponse]:
     response.headers["Cache-Control"] = "no-store"
     statement = select(ElectoralPollingPlace).where(

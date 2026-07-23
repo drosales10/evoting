@@ -195,7 +195,7 @@ def _parse_row(row: tuple[Any, ...], columns: dict[str, int], row_number: int) -
         region=_text(value("Región")),
         # Seccional is an organizational chapter in the reference file (often "Nacional").
         section=_text(value("Seccional")) or _text(value("Estado")),
-        # Municipio drives municipality_id; Ubicación is the estado/state label in the reference file.
+        # Municipio drives municipality_id; Ubicación is the estado/state label.
         location=_text(value("Municipio")),
         ubicacion=_text(value("Ubicación")),
         title=_text(value("Título")),
@@ -440,7 +440,11 @@ async def import_members(
                         state_label = parent_state.name
                         if region_id is None:
                             region_id = parent_state.region_id
-            region_label = next((r.name for r in regions if r.id == region_id), None) if region_id else None
+            region_label = (
+                next((r.name for r in regions if r.id == region_id), None)
+                if region_id
+                else None
+            )
             values = _member_values(
                 parsed,
                 region_id=region_id,

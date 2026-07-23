@@ -18,7 +18,12 @@ from app.services.tally_artifact import artifact_sha256, verify_artifact  # noqa
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--artifact", type=Path, required=True, help="JSON file with artifact or wrapper")
+    parser.add_argument(
+        "--artifact",
+        type=Path,
+        required=True,
+        help="JSON file with artifact or wrapper",
+    )
     parser.add_argument("--signature", default=None, help="Override signature if not in file")
     parser.add_argument("--public-key", type=Path, required=True)
     args = parser.parse_args()

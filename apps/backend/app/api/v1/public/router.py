@@ -4,7 +4,7 @@ from uuid import UUID
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
@@ -156,7 +156,9 @@ async def _load_official_tally(
     return result
 
 
-def _verify_tally(election: Election, tally: ElectionTally) -> tuple[PublicTallyArtifact, bool, bool]:
+def _verify_tally(
+    election: Election, tally: ElectionTally
+) -> tuple[PublicTallyArtifact, bool, bool]:
     artifact_model = PublicTallyArtifact.model_validate(tally.artifact)
     stored_artifact_sha256 = artifact_sha256(tally.artifact)
     pem = _signing_or_public_pem(election)

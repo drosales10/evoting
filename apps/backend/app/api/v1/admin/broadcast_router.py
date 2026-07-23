@@ -192,7 +192,11 @@ def append_milestone(
 ) -> BroadcastMilestone:
     milestones = list(row.milestones or [])
     # Keep a single entry per type (latest wins).
-    milestones = [m for m in milestones if not (isinstance(m, dict) and m.get("type") == milestone_type)]
+    milestones = [
+        m
+        for m in milestones
+        if not (isinstance(m, dict) and m.get("type") == milestone_type)
+    ]
     entry = {
         "type": milestone_type,
         "label": _MILESTONE_LABELS[milestone_type],
