@@ -94,6 +94,7 @@ class Member(CreatedAtMixin, Base):
         ForeignKey("electoral_polling_places.id", ondelete="SET NULL"),
         nullable=True,
     )
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mention: Mapped[str | None] = mapped_column(String(255), nullable=True)
     graduation_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     photo_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)

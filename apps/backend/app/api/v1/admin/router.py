@@ -37,6 +37,7 @@ from app.models import (
     Election,
     ElectionTally,
     ElectionTallyProposal,
+    ElectoralMunicipality,
     ElectoralRegion,
     ElectoralState,
     EncryptedBallot,
@@ -82,11 +83,23 @@ class AdminMemberCreateRequest(BaseModel):
     full_name: str = Field(min_length=2, max_length=255)
     dni: str = Field(min_length=3, max_length=50, pattern=r"^[A-Za-z0-9._-]+$")
     membership_months: int = Field(default=0, ge=0, le=1200)
+    registry_code: str | None = Field(default=None, max_length=50)
+    status: str | None = Field(default=None, max_length=50)
+    member_type: str | None = Field(default=None, max_length=50)
+    decade: int | None = Field(default=None, ge=0, le=2100)
+    graduation_year: int | None = Field(default=None, ge=1900, le=2100)
+    semester: str | None = Field(default=None, max_length=10)
+    sex: str | None = Field(default=None, max_length=10)
+    alive: bool | None = None
     region: str | None = Field(default=None, max_length=120)
     section: str | None = Field(default=None, max_length=120)
     location: str | None = Field(default=None, max_length=120)
+    title: str | None = Field(default=None, max_length=255)
+    mention: str | None = Field(default=None, max_length=255)
+    graduation_date: date | None = None
     region_id: UUID | None = None
     state_id: UUID | None = None
+    municipality_id: UUID | None = None
 
     @field_validator("email", "full_name", "dni", mode="before")
     @classmethod
@@ -98,13 +111,98 @@ class AdminMemberCreateRequest(BaseModel):
     def normalize_email(cls, value: str) -> str:
         return value.lower()
 
-    @field_validator("region", "section", "location", mode="before")
+    @field_validator(
+        "registry_code",
+        "status",
+        "member_type",
+        "semester",
+        "sex",
+        "region",
+        "section",
+        "location",
+        "title",
+        "mention",
+        mode="before",
+    )
     @classmethod
     def normalize_optional_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
         cleaned = value.strip()
         return cleaned or None
+
+    @field_validator("status", mode="after")
+    @classmethod
+    def normalize_status(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.upper()
+        if normalized not in {"ACTIVE", "INACTIVE"}:
+            raise ValueError("status must be ACTIVE or INACTIVE")
+        return normalized
+
+
+class AdminMemberUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=255)
+    full_name: str = Field(min_length=2, max_length=255)
+    dni: str = Field(min_length=3, max_length=50, pattern=r"^[A-Za-z0-9._-]+$")
+    membership_months: int = Field(default=0, ge=0, le=1200)
+    registry_code: str | None = Field(default=None, max_length=50)
+    status: str = Field(default="ACTIVE", max_length=50)
+    member_type: str | None = Field(default=None, max_length=50)
+    decade: int | None = Field(default=None, ge=0, le=2100)
+    graduation_year: int | None = Field(default=None, ge=1900, le=2100)
+    semester: str | None = Field(default=None, max_length=10)
+    sex: str | None = Field(default=None, max_length=10)
+    alive: bool | None = None
+    region: str | None = Field(default=None, max_length=120)
+    section: str | None = Field(default=None, max_length=120)
+    location: str | None = Field(default=None, max_length=120)
+    title: str | None = Field(default=None, max_length=255)
+    mention: str | None = Field(default=None, max_length=255)
+    graduation_date: date | None = None
+    region_id: UUID | None = None
+    state_id: UUID | None = None
+    municipality_id: UUID | None = None
+
+    @field_validator("email", "full_name", "dni", mode="before")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("email", mode="after")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return value.lower()
+
+    @field_validator(
+        "registry_code",
+        "member_type",
+        "semester",
+        "sex",
+        "region",
+        "section",
+        "location",
+        "title",
+        "mention",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value: str) -> str:
+        normalized = str(value).strip().upper()
+        if normalized not in {"ACTIVE", "INACTIVE"}:
+            raise ValueError("status must be ACTIVE or INACTIVE")
+        return normalized
 
 
 class AdminMemberResponse(BaseModel):
@@ -130,12 +228,25 @@ class AdminMemberResponse(BaseModel):
     state_id: UUID | None = None
     municipality_id: UUID | None = None
     polling_place_id: UUID | None = None
+    title: str | None
     mention: str | None
     graduation_date: date | None
     photo_filename: str | None
     photo_content_type: str | None
     photo_size_bytes: int | None
     created_at: datetime
+    has_photo: bool = False
+
+    @classmethod
+    def from_member(cls, member: Member) -> "AdminMemberResponse":
+        payload = cls.model_validate(member)
+        return payload.model_copy(
+            update={
+                "has_photo": bool(
+                    member.photo_filename or member.photo_size_bytes or member.photo_sha256
+                )
+            }
+        )
 
 
 class AdminMemberListResponse(BaseModel):
@@ -521,6 +632,124 @@ async def _require_member_manager(
     return claims
 
 
+async def _get_organization_member(
+    session: AsyncSession,
+    member_id: UUID,
+    organization_id: UUID,
+) -> Member:
+    member = await session.scalar(
+        select(Member).where(Member.id == member_id, Member.organization_id == organization_id)
+    )
+    if member is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+    return member
+
+
+async def _resolve_member_territory(
+    session: AsyncSession,
+    organization_id: UUID,
+    *,
+    region_id: UUID | None,
+    state_id: UUID | None,
+    municipality_id: UUID | None,
+) -> tuple[UUID | None, UUID | None, UUID | None, str | None, str | None, str | None]:
+    """Validate territorial FKs and return ids plus denormalized labels."""
+    region_label: str | None = None
+    state_label: str | None = None
+    municipality_label: str | None = None
+    resolved_region_id = region_id
+    resolved_state_id = state_id
+    resolved_municipality_id = municipality_id
+
+    region: ElectoralRegion | None = None
+    if resolved_region_id is not None:
+        region = await session.scalar(
+            select(ElectoralRegion).where(
+                ElectoralRegion.id == resolved_region_id,
+                ElectoralRegion.organization_id == organization_id,
+            )
+        )
+        if region is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid region_id")
+        region_label = region.name
+
+    state: ElectoralState | None = None
+    if resolved_state_id is not None:
+        state = await session.scalar(
+            select(ElectoralState).where(
+                ElectoralState.id == resolved_state_id,
+                ElectoralState.organization_id == organization_id,
+            )
+        )
+        if state is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid state_id")
+        if resolved_region_id is not None and state.region_id != resolved_region_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="state_id does not belong to the selected region",
+            )
+        resolved_region_id = state.region_id
+        if region is None or region.id != resolved_region_id:
+            region = await session.scalar(
+                select(ElectoralRegion).where(
+                    ElectoralRegion.id == resolved_region_id,
+                    ElectoralRegion.organization_id == organization_id,
+                )
+            )
+            region_label = region.name if region else region_label
+        state_label = state.name
+
+    if resolved_municipality_id is not None:
+        municipality = await session.scalar(
+            select(ElectoralMunicipality).where(
+                ElectoralMunicipality.id == resolved_municipality_id,
+                ElectoralMunicipality.organization_id == organization_id,
+            )
+        )
+        if municipality is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid municipality_id",
+            )
+        if resolved_state_id is not None and municipality.state_id != resolved_state_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="municipality_id does not belong to the selected state",
+            )
+        resolved_state_id = municipality.state_id
+        if state is None or state.id != resolved_state_id:
+            state = await session.scalar(
+                select(ElectoralState).where(
+                    ElectoralState.id == resolved_state_id,
+                    ElectoralState.organization_id == organization_id,
+                )
+            )
+            if state is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Invalid municipality state",
+                )
+            state_label = state.name
+            resolved_region_id = state.region_id
+            region = await session.scalar(
+                select(ElectoralRegion).where(
+                    ElectoralRegion.id == resolved_region_id,
+                    ElectoralRegion.organization_id == organization_id,
+                )
+            )
+            region_label = region.name if region else region_label
+        municipality_label = municipality.name
+
+    return (
+        resolved_region_id,
+        resolved_state_id,
+        resolved_municipality_id,
+        region_label,
+        state_label,
+        municipality_label,
+    )
+
+
 async def _require_election_mutation(
     claims: Annotated[AccessClaims, Depends(_require_election_manager)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
@@ -741,7 +970,7 @@ async def list_admin_members(
     members = list((await session.scalars(statement)).all())
     total_pages = max(1, (total + limit - 1) // limit) if total else 1
     return AdminMemberListResponse(
-        items=[AdminMemberResponse.model_validate(member) for member in members],
+        items=[AdminMemberResponse.from_member(member) for member in members],
         page=page,
         limit=limit,
         total=total,
@@ -762,18 +991,38 @@ async def create_admin_member(
 ) -> AdminMemberResponse:
     """Create an active roster member inside the authenticated organization."""
     response.headers["Cache-Control"] = "no-store"
+    region_id, state_id, municipality_id, region_label, state_label, municipality_label = (
+        await _resolve_member_territory(
+            session,
+            claims.org_id,
+            region_id=payload.region_id,
+            state_id=payload.state_id,
+            municipality_id=payload.municipality_id,
+        )
+    )
     member = Member(
         organization_id=claims.org_id,
         email=payload.email,
         full_name=payload.full_name,
         dni=payload.dni,
-        status="ACTIVE",
+        registry_code=payload.registry_code,
+        status=payload.status or "ACTIVE",
+        member_type=payload.member_type,
         membership_months=payload.membership_months,
-        region=payload.region,
-        section=payload.section,
-        location=payload.location,
-        region_id=payload.region_id,
-        state_id=payload.state_id,
+        decade=payload.decade,
+        graduation_year=payload.graduation_year,
+        semester=payload.semester,
+        sex=payload.sex,
+        alive=payload.alive,
+        region=payload.region or region_label,
+        section=payload.section or state_label,
+        location=payload.location or municipality_label,
+        title=payload.title,
+        mention=payload.mention,
+        graduation_date=payload.graduation_date,
+        region_id=region_id,
+        state_id=state_id,
+        municipality_id=municipality_id,
     )
     session.add(member)
     try:
@@ -785,7 +1034,24 @@ async def create_admin_member(
             detail="Member email or DNI already exists in this organization",
         ) from exc
     await session.refresh(member)
-    return AdminMemberResponse.model_validate(member)
+    return AdminMemberResponse.from_member(member)
+
+
+@router.get("/members/template")
+async def download_member_template(
+    claims: Annotated[AccessClaims, Depends(_require_member_manager)],
+) -> StreamingResponse:
+    """Download an empty XLSX template for bulk roster import."""
+    _ = claims
+    workbook = build_member_workbook([])
+    return StreamingResponse(
+        workbook,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'attachment; filename="plantilla_padron_administrativo.xlsx"',
+        },
+    )
 
 
 @router.post("/members/import", response_model=AdminMemberImportResponse)
@@ -864,6 +1130,94 @@ async def export_admin_members(
     )
 
 
+@router.get("/members/{member_id}", response_model=AdminMemberResponse)
+async def get_admin_member(
+    member_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_member_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> AdminMemberResponse:
+    """Return a single roster member for preview or edit."""
+    response.headers["Cache-Control"] = "no-store"
+    member = await _get_organization_member(session, member_id, claims.org_id)
+    return AdminMemberResponse.from_member(member)
+
+
+@router.put("/members/{member_id}", response_model=AdminMemberResponse)
+async def update_admin_member(
+    member_id: UUID,
+    payload: AdminMemberUpdateRequest,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_member_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> AdminMemberResponse:
+    """Update roster fields and territorial relations for a member."""
+    response.headers["Cache-Control"] = "no-store"
+    member = await _get_organization_member(session, member_id, claims.org_id)
+    region_id, state_id, municipality_id, region_label, state_label, municipality_label = (
+        await _resolve_member_territory(
+            session,
+            claims.org_id,
+            region_id=payload.region_id,
+            state_id=payload.state_id,
+            municipality_id=payload.municipality_id,
+        )
+    )
+    member.email = payload.email
+    member.full_name = payload.full_name
+    member.dni = payload.dni
+    member.registry_code = payload.registry_code
+    member.status = payload.status
+    member.member_type = payload.member_type
+    member.membership_months = payload.membership_months
+    member.decade = payload.decade
+    member.graduation_year = payload.graduation_year
+    member.semester = payload.semester
+    member.sex = payload.sex
+    member.alive = payload.alive
+    member.region = payload.region or region_label
+    member.section = payload.section or state_label
+    member.location = payload.location or municipality_label
+    member.title = payload.title
+    member.mention = payload.mention
+    member.graduation_date = payload.graduation_date
+    member.region_id = region_id
+    member.state_id = state_id
+    member.municipality_id = municipality_id
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Member email, DNI or registry code already exists in this organization",
+        ) from exc
+    await session.refresh(member)
+    return AdminMemberResponse.from_member(member)
+
+
+@router.delete("/members/{member_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_admin_member(
+    member_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_member_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> Response:
+    """Delete a roster member when it has no electoral references."""
+    response.headers["Cache-Control"] = "no-store"
+    member = await _get_organization_member(session, member_id, claims.org_id)
+    await session.delete(member)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete member referenced by elections, candidacies or tokens",
+        ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/members/{member_id}/photo", response_model=AdminMemberResponse)
 async def upload_admin_member_photo(
     member_id: UUID,
@@ -894,11 +1248,7 @@ async def upload_admin_member_photo(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="The uploaded file is not a valid image",
         ) from exc
-    member = await session.scalar(
-        select(Member).where(Member.id == member_id, Member.organization_id == claims.org_id)
-    )
-    if member is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+    member = await _get_organization_member(session, member_id, claims.org_id)
     member.photo_data = content
     member.photo_content_type = file.content_type
     member.photo_filename = Path(file.filename or "member-photo").name[:255]
@@ -906,7 +1256,7 @@ async def upload_admin_member_photo(
     member.photo_size_bytes = len(content)
     await session.commit()
     await session.refresh(member)
-    return AdminMemberResponse.model_validate(member)
+    return AdminMemberResponse.from_member(member)
 
 
 @router.get("/members/{member_id}/photo")
@@ -916,10 +1266,8 @@ async def get_admin_member_photo(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> Response:
     """Serve a stored member photo only to an authorized ADMIN tenant."""
-    member = await session.scalar(
-        select(Member).where(Member.id == member_id, Member.organization_id == claims.org_id)
-    )
-    if member is None or not member.photo_data or not member.photo_content_type:
+    member = await _get_organization_member(session, member_id, claims.org_id)
+    if not member.photo_data or not member.photo_content_type:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
     return Response(
         content=member.photo_data,
