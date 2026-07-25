@@ -7,6 +7,8 @@ type AdminOverview = {
   organization_name: string;
   roles: string[];
   member_count: number;
+  active_member_count: number;
+  inactive_member_count: number;
   election_count: number;
   encrypted_ballot_count: number;
 };
@@ -420,7 +422,13 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
         left.full_name.localeCompare(right.full_name, "es"),
       ));
       setOverview((current) =>
-        current ? { ...current, member_count: current.member_count + 1 } : current,
+        current
+          ? {
+              ...current,
+              member_count: current.member_count + 1,
+              active_member_count: current.active_member_count + 1,
+            }
+          : current,
       );
       formElement.reset();
       setMemberMessage("Miembro agregado al padrón activo.");
@@ -947,7 +955,21 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
         <p>Roles activos: {overview.roles.join(", ")}</p>
       </div>
       <div className="surface-grid" aria-label="Resumen administrativo">
-        <div className="surface-card"><span className="eyebrow">Padrón</span><h2>{overview.member_count}</h2><p>Miembros registrados</p></div>
+        <div className="surface-card">
+          <span className="eyebrow">Padrón · Total</span>
+          <h2>{overview.member_count}</h2>
+          <p>Miembros registrados</p>
+        </div>
+        <div className="surface-card">
+          <span className="eyebrow">Padrón · Activos</span>
+          <h2 className="text-emerald-700 dark:text-emerald-300">{overview.active_member_count}</h2>
+          <p>Estatus ACTIVE</p>
+        </div>
+        <div className="surface-card">
+          <span className="eyebrow">Padrón · Inactivos</span>
+          <h2 className="text-amber-700 dark:text-amber-300">{overview.inactive_member_count}</h2>
+          <p>Estatus INACTIVE</p>
+        </div>
         <div className="surface-card"><span className="eyebrow">Elecciones</span><h2>{overview.election_count}</h2><p>Procesos de la organización</p></div>
         <div className="surface-card"><span className="eyebrow">Urna</span><h2>{overview.encrypted_ballot_count}</h2><p>Papeletas cifradas</p></div>
       </div>

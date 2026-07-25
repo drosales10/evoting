@@ -39,6 +39,13 @@ type MemberList = {
   total_pages: number;
 };
 
+type PadronSummary = {
+  member_count: number;
+  active_member_count: number;
+  inactive_member_count: number;
+  member_type_counts: Array<{ member_type: string; count: number }>;
+};
+
 type TerritoryUnit = { id: string; code: string; name: string; parent_id?: string | null };
 
 type MemberFormState = {
@@ -63,6 +70,8 @@ type MemberFormState = {
 };
 
 type PanelMode = "preview" | "edit" | null;
+
+const SUGGESTED_MEMBER_TYPES = ["Activo", "Asociado", "Correspondiente", "Colectivo"] as const;
 
 const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -141,6 +150,7 @@ export function PadronCatalog() {
   const [aliveFilter, setAliveFilter] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<MemberList | null>(null);
+  const [summary, setSummary] = useState<PadronSummary | null>(null);
   const [regions, setRegions] = useState<TerritoryUnit[]>([]);
   const [states, setStates] = useState<TerritoryUnit[]>([]);
   const [municipalities, setMunicipalities] = useState<TerritoryUnit[]>([]);
@@ -152,6 +162,24 @@ export function PadronCatalog() {
   const [editForm, setEditForm] = useState<MemberFormState>(emptyForm());
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
+
+  const loadSummary = useCallback(async () => {
+    try {
+      const response = await fetch(`${apiUrl()}/api/v1/admin/overview`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!response.ok) return;
+      const payload = (await response.json()) as PadronSummary;
+      setSummary({
+        member_count: payload.member_count,
+        active_member_count: payload.active_member_count,
+        inactive_member_count: payload.inactive_member_count,
+      });
+    } catch {
+      /* El listado sigue siendo usable sin el resumen. */
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -177,12 +205,13 @@ export function PadronCatalog() {
       }
       setData(payload);
       setMessage(null);
+      await loadSummary();
     } catch {
       setMessage("Error de red al cargar el padrón.");
     } finally {
       setBusy(false);
     }
-  }, [page, query, regionId, stateId, statusFilter, aliveFilter]);
+  }, [page, query, regionId, stateId, statusFilter, aliveFilter, loadSummary]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -424,8 +453,31 @@ export function PadronCatalog() {
           <h2 className="text-xl font-semibold">Padrón administrativo</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
             Catálogo paginado con vista previa, edición, eliminación y relación territorial
-            (Región / Estado / Municipio).
+            (Región / Estado / Municipio). Si un miembro tiene historial electoral, desactívelo
+            en lugar de borrarlo.
           </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-3" aria-label="Resumen del padrón">
+          <div className="card-panel">
+            <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Total</p>
+            <p className="mt-2 text-3xl font-semibold">{summary?.member_count ?? "—"}</p>
+            <p className="mt-1 text-sm text-[var(--muted)]">Miembros registrados</p>
+          </div>
+          <div className="card-panel">
+            <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Activos</p>
+            <p className="mt-2 text-3xl font-semibold text-emerald-700 dark:text-emerald-300">
+              {summary?.active_member_count ?? "—"}
+            </p>
+            <p className="mt-1 text-sm text-[var(--muted)]">Estatus ACTIVE</p>
+          </div>
+          <div className="card-panel">
+            <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Inactivos</p>
+            <p className="mt-2 text-3xl font-semibold text-amber-700 dark:text-amber-300">
+              {summary?.inactive_member_count ?? "—"}
+            </p>
+            <p className="mt-1 text-sm text-[var(--muted)]">Estatus INACTIVE</p>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-end gap-3">

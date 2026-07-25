@@ -160,6 +160,7 @@ class Slate(CreatedAtMixin, Base):
     __table_args__ = (
         UniqueConstraint("election_id", "name", name="uq_slates_election_name"),
         Index("ix_slates_organization_status", "organization_id", "status"),
+        Index("ix_slates_proxy_member_id", "proxy_member_id"),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -191,6 +192,7 @@ class Candidate(CreatedAtMixin, Base):
     __tablename__ = "candidates"
     __table_args__ = (
         UniqueConstraint("slate_id", "position_id", name="uq_candidates_slate_position"),
+        Index("ix_candidates_member_id", "member_id"),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -218,6 +220,7 @@ class MemberElectionStatus(CreatedAtMixin, Base):
     __table_args__ = (
         UniqueConstraint("election_id", "member_id", name="uq_member_election_status"),
         Index("ix_member_election_status_organization", "organization_id", "election_id"),
+        Index("ix_member_election_status_member_id", "member_id"),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -320,6 +323,7 @@ class BallotIssuanceToken(CreatedAtMixin, Base):
     __table_args__ = (
         UniqueConstraint("token_hash", name="uq_ballot_issuance_token_hash"),
         Index("ix_ballot_issuance_election_member", "election_id", "member_id"),
+        Index("ix_ballot_issuance_tokens_member_id", "member_id"),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)

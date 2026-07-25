@@ -87,6 +87,7 @@ class VoterOtpChallenge(CreatedAtMixin, Base):
     __tablename__ = "voter_otp_challenges"
     __table_args__ = (
         Index("ix_voter_otp_challenges_organization_expires", "organization_id", "expires_at"),
+        Index("ix_voter_otp_challenges_member_id", "member_id"),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)

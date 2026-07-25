@@ -50,6 +50,13 @@ from app.models import (
 )
 from app.services.audit import append_audit_event
 from app.services.csrf import require_csrf
+from app.services.member_deletion import (
+    collect_member_deletion_blockers,
+    format_member_deletion_conflict,
+    purge_stale_member_auth_records,
+    race_condition_deletion_conflict,
+)
+from app.services.member_metrics import build_member_type_counts
 from app.services.member_spreadsheet import (
     MAX_IMPORT_BYTES,
     MemberImportResult,
@@ -66,6 +73,13 @@ MEMBER_MANAGER_ROLES = frozenset({"SUPER_ADMIN", "ELECTORAL_JUSTICE"})
 ElectionStatus = Literal["DRAFT", "REGISTRATION", "FREEZE", "ACTIVE", "CLOSED", "TALLIED"]
 
 
+class MemberTypeCount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    member_type: str = Field(min_length=1, max_length=50)
+    count: int = Field(ge=0)
+
+
 class AdminOverviewResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -73,6 +87,9 @@ class AdminOverviewResponse(BaseModel):
     organization_name: str
     roles: list[str] = Field(min_length=1)
     member_count: int = Field(ge=0)
+    active_member_count: int = Field(ge=0)
+    inactive_member_count: int = Field(ge=0)
+    member_type_counts: list[MemberTypeCount] = Field(default_factory=list)
     election_count: int = Field(ge=0)
     encrypted_ballot_count: int = Field(ge=0)
 
@@ -614,6 +631,45 @@ async def _count_for_organization(
     return int((await session.execute(statement)).scalar_one())
 
 
+async def _member_status_counts(
+    session: AsyncSession,
+    organization_id: UUID,
+) -> tuple[int, int, int]:
+    """Return (total, active, inactive) roster counts for an organization."""
+    rows = (
+        await session.execute(
+            select(Member.status, func.count())
+            .where(Member.organization_id == organization_id)
+            .group_by(Member.status)
+        )
+    ).all()
+    by_status = {str(status_value): int(count) for status_value, count in rows}
+    active = by_status.get("ACTIVE", 0)
+    inactive = by_status.get("INACTIVE", 0)
+    total = sum(by_status.values())
+    return total, active, inactive
+
+
+async def _member_type_counts(
+    session: AsyncSession,
+    organization_id: UUID,
+) -> list[MemberTypeCount]:
+    """Return Tipo breakdown; always includes canonical categories."""
+    rows = (
+        await session.execute(
+            select(Member.member_type, func.count())
+            .where(Member.organization_id == organization_id)
+            .group_by(Member.member_type)
+        )
+    ).all()
+    return [
+        MemberTypeCount(member_type=label, count=count)
+        for label, count in build_member_type_counts(
+            ((raw, int(value)) for raw, value in rows)
+        )
+    ]
+
+
 async def _require_election_manager(
     claims: Annotated[AccessClaims, Depends(require_admin)],
 ) -> AccessClaims:
@@ -912,11 +968,17 @@ async def admin_overview(
             detail="Organization not found",
         )
 
+    member_count, active_member_count, inactive_member_count = await _member_status_counts(
+        session, claims.org_id
+    )
     return AdminOverviewResponse(
         organization_slug=organization.slug,
         organization_name=organization.name,
         roles=claims.roles,
-        member_count=await _count_for_organization(session, Member, claims.org_id),
+        member_count=member_count,
+        active_member_count=active_member_count,
+        inactive_member_count=inactive_member_count,
+        member_type_counts=await _member_type_counts(session, claims.org_id),
         election_count=await _count_for_organization(session, Election, claims.org_id),
         encrypted_ballot_count=await _count_for_organization(
             session, EncryptedBallot, claims.org_id
@@ -1213,9 +1275,26 @@ async def delete_admin_member(
     claims: Annotated[AccessClaims, Depends(_require_member_manager)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> Response:
-    """Delete a roster member when it has no electoral references."""
+    """Delete a roster member only when no electoral or live auth record refers to it."""
     response.headers["Cache-Control"] = "no-store"
     member = await _get_organization_member(session, member_id, claims.org_id)
+
+    # Drop consumed/expired OTP noise, then load all blockers in one round-trip
+    # so the administrator gets an actionable conflict instead of a generic FK error.
+    await purge_stale_member_auth_records(
+        session,
+        member_id=member.id,
+        organization_id=claims.org_id,
+    )
+    blockers = await collect_member_deletion_blockers(
+        session,
+        member_id=member.id,
+        organization_id=claims.org_id,
+    )
+    conflict = format_member_deletion_conflict(blockers)
+    if conflict:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=conflict)
+
     await session.delete(member)
     try:
         await session.commit()
@@ -1223,7 +1302,7 @@ async def delete_admin_member(
         await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot delete member referenced by elections, candidacies or tokens",
+            detail=race_condition_deletion_conflict(),
         ) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
