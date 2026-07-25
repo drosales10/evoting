@@ -1,9 +1,9 @@
 from uuid import UUID
 
-from sqlalchemy import Select, and_, or_, select
+from sqlalchemy import Select, and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Election, ElectionTally
+from app.models import Election, ElectionBroadcast, ElectionTally
 
 PUBLIC_ELECTION_STATUSES = ("REGISTRATION", "FREEZE", "ACTIVE", "CLOSED", "TALLIED")
 
@@ -12,6 +12,11 @@ class PublicElectionRepository:
     """Read-only queries for data approved for the public portal."""
 
     def list_published(self, organization_id: UUID | None = None) -> Select[tuple[Election]]:
+        # Keep ceremony VOD discoverable even when a pilot/no-quorum tally would
+        # otherwise hide a TALLIED election from the public portal.
+        has_broadcast = exists(
+            select(ElectionBroadcast.id).where(ElectionBroadcast.election_id == Election.id)
+        )
         statement = (
             select(Election)
             .outerjoin(ElectionTally, ElectionTally.election_id == Election.id)
@@ -23,6 +28,7 @@ class PublicElectionRepository:
                         ElectionTally.quorum_met.is_(True),
                         ElectionTally.pilot_override.is_(False),
                     ),
+                    has_broadcast,
                 ),
             )
         )

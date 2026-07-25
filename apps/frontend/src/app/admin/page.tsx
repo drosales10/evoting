@@ -18,6 +18,8 @@ type Overview = {
   active_member_count: number;
   inactive_member_count: number;
   member_type_counts: MemberTypeCount[];
+  eligible_voter_count: number;
+  ineligible_voter_count: number;
   election_count: number;
   encrypted_ballot_count: number;
 };
@@ -97,9 +99,10 @@ export default function AdminHomePage() {
         <div>
           <p className="eyebrow mb-2">Padrón · Tipo</p>
           <p className="mb-2 text-sm text-[var(--muted)]">
-            Categoría de membresía (voz/voto). Distinta del estatus operativo.
+            Categorías estatutarias S.V.I.F. (Cap. I): Activo, Temporal, Asociado, Aspirante,
+            Colectivo, Correspondiente y Honorario.
           </p>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
             {(overview?.member_type_counts ?? []).map((item) => (
               <div className="card-panel" key={item.member_type}>
                 <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
@@ -117,6 +120,32 @@ export default function AdminHomePage() {
           </div>
         </div>
 
+        <div>
+          <p className="eyebrow mb-2">Padrón · Elegibilidad electoral</p>
+          <p className="mb-2 text-sm text-[var(--muted)]">
+            Estatus ACTIVE + Vivo confirmado + Tipo con voto (Activo/Temporal/Fundador; vacío =
+            Activo).
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="card-panel">
+              <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                Elegibles para votar
+              </p>
+              <p className="mt-2 text-3xl font-semibold text-emerald-700 dark:text-emerald-300">
+                {overview?.eligible_voter_count ?? "—"}
+              </p>
+            </div>
+            <div className="card-panel">
+              <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                No elegibles
+              </p>
+              <p className="mt-2 text-3xl font-semibold text-amber-700 dark:text-amber-300">
+                {overview?.ineligible_voter_count ?? "—"}
+              </p>
+            </div>
+          </div>
+        </div>
+
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="card-panel">
             <p className="eyebrow">Elecciones</p>
@@ -128,11 +157,12 @@ export default function AdminHomePage() {
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {[
             { href: "/admin/padron", label: "Padrón", desc: "Miembros e importación" },
             { href: "/admin/territory", label: "Territorio", desc: "N2–N5" },
             { href: "/admin/elections", label: "Elecciones", desc: "Alcance y ciclo" },
+            { href: "/admin/resultados", label: "Resultados", desc: "Dashboard y mapa" },
             { href: "/admin/geovisor", label: "Geovisor", desc: "Leaflet N1–N5" },
           ].map((card) => (
             <Link key={card.href} href={card.href} className="card-panel transition hover:border-[var(--primary)]">

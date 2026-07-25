@@ -15,12 +15,47 @@ function placeholderPosition(index: number): [number, number] {
   return [lng, lat];
 }
 
+function formatParticipation(props: Feature["properties"]): {
+  hasMetrics: boolean;
+  voted: string;
+  eligible: string;
+  pct: string;
+} {
+  const voted = props?.voted_count;
+  const eligible = props?.eligible_count;
+  const pct = props?.participation_pct;
+  const hasMetrics = voted != null || eligible != null || pct != null;
+  return {
+    hasMetrics,
+    voted: voted != null ? String(voted) : "—",
+    eligible: eligible != null ? String(eligible) : "—",
+    pct: pct != null ? `${String(pct)}%` : "—",
+  };
+}
+
+function participationHtml(feature: Feature): string {
+  const name = String(feature.properties?.name ?? "");
+  const level = String(feature.properties?.level ?? "");
+  const metrics = formatParticipation(feature.properties);
+  if (!metrics.hasMetrics) {
+    return `<strong>${name}</strong><br/>${level}`;
+  }
+  return (
+    `<strong>${name}</strong><br/>${level}` +
+    `<br/>Votaron: ${metrics.voted}` +
+    `<br/>Elegibles: ${metrics.eligible}` +
+    `<br/>Participación: ${metrics.pct}`
+  );
+}
+
 export function ClientMapView({
   data,
   mapboxToken,
+  compact = false,
 }: {
   data: FeatureCollection | null;
   mapboxToken?: string;
+  compact?: boolean;
 }) {
   const token = (mapboxToken ?? process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "").trim();
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
@@ -127,49 +162,72 @@ export function ClientMapView({
     );
   }
 
+  const selectedMetrics = selected ? formatParticipation(selected.properties) : null;
+
   return (
     <div className="relative h-full w-full">
-      <div className="absolute left-3 top-3 z-10 space-y-2 rounded-xl border border-[var(--line)] bg-[var(--surface)]/90 p-3 backdrop-blur">
-        <p className="text-xs font-extrabold uppercase tracking-wide text-[var(--muted)]">Capas</p>
-        <div className="flex flex-col gap-1">
-          {LEVELS.map((level) => (
-            <label key={level} className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={enabled[level] !== false}
-                onChange={() => setEnabled((prev) => ({ ...prev, [level]: !prev[level] }))}
-              />
-              {level}
-            </label>
-          ))}
-        </div>
-        {selected ? (
-          <div className="max-w-[200px] border-t border-[var(--line)] pt-2 text-xs">
-            <p className="font-semibold">{String(selected.properties?.name ?? "")}</p>
-            <p className="text-[var(--muted)]">
-              {String(selected.properties?.level ?? "")}
-              {selected.properties?.participation_pct != null
-                ? ` · ${String(selected.properties.participation_pct)}%`
-                : ""}
-            </p>
-          </div>
+      <div className="absolute left-3 top-3 z-10 max-w-[240px] space-y-2 rounded-xl border border-[var(--line)] bg-[var(--surface)]/90 p-3 backdrop-blur">
+        {!compact ? (
+          <>
+            <p className="text-xs font-extrabold uppercase tracking-wide text-[var(--muted)]">Capas</p>
+            <div className="flex flex-col gap-1">
+              {LEVELS.map((level) => (
+                <label key={level} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={enabled[level] !== false}
+                    onChange={() => setEnabled((prev) => ({ ...prev, [level]: !prev[level] }))}
+                  />
+                  {level}
+                </label>
+              ))}
+            </div>
+          </>
         ) : null}
+        {selected ? (
+          <div className={`${compact ? "" : "border-t border-[var(--line)] pt-2"} text-xs`}>
+            <p className="font-semibold">{String(selected.properties?.name ?? "")}</p>
+            <p className="text-[var(--muted)]">{String(selected.properties?.level ?? "")}</p>
+            {selectedMetrics?.hasMetrics ? (
+              <dl className="mt-2 space-y-1 text-[var(--ink)]">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-[var(--muted)]">Votaron</dt>
+                  <dd className="font-semibold">{selectedMetrics.voted}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-[var(--muted)]">Elegibles</dt>
+                  <dd className="font-semibold">{selectedMetrics.eligible}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-[var(--muted)]">Participación</dt>
+                  <dd className="font-semibold text-emerald-700 dark:text-emerald-300">
+                    {selectedMetrics.pct}
+                  </dd>
+                </div>
+              </dl>
+            ) : (
+              <p className="mt-1 text-[var(--muted)]">Sin métricas de participación</p>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-[var(--muted)]">
+            {compact ? "Clic en un polígono" : "Selecciona una unidad territorial"}
+          </p>
+        )}
       </div>
       <DeckGL
-        initialViewState={{ longitude: -66.1, latitude: 8.0, zoom: 5.5, pitch: 0, bearing: 0 }}
+        initialViewState={{
+          longitude: -66.1,
+          latitude: 8.0,
+          zoom: compact ? 5.2 : 5.5,
+          pitch: 0,
+          bearing: 0,
+        }}
         controller
         layers={layers}
         getTooltip={({ object }: { object?: Feature | { feature: Feature } }) => {
           const feature = object && "feature" in object ? object.feature : object;
-          return feature
-            ? {
-                html: `<strong>${String(feature.properties?.name ?? "")}</strong><br/>${String(feature.properties?.level ?? "")}${
-                  feature.properties?.participation_pct != null
-                    ? ` · ${String(feature.properties.participation_pct)}%`
-                    : ""
-                }`,
-              }
-            : null;
+          return feature ? { html: participationHtml(feature) } : null;
         }}
       >
         <Map mapboxAccessToken={token} mapStyle="mapbox://styles/mapbox/dark-v11" />

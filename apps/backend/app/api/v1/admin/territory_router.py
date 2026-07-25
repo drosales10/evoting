@@ -14,14 +14,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import require_admin
 from app.auth.tokens import AccessClaims
 from app.db.session import get_db_session
+from app.services.geo_features import build_admin_feature_collection, build_public_results_collection
 from app.models import (
+    Election,
+    ElectionTally,
     ElectoralMunicipality,
     ElectoralPollingPlace,
     ElectoralRegion,
     ElectoralState,
     Organization,
 )
-from app.services.geo_features import build_admin_feature_collection
 
 router = APIRouter(prefix="/admin", tags=["admin-territory"])
 ELECTION_MANAGER_ROLES = frozenset({"SUPER_ADMIN", "ELECTORAL_JUSTICE"})
@@ -418,3 +420,31 @@ async def admin_geo_features(
     response.headers["Cache-Control"] = "no-store"
     level_set = {part.strip().upper() for part in levels.split(",") if part.strip()}
     return await build_admin_feature_collection(session, claims.org_id, level_set)
+
+
+@router.get("/geo/results/{election_id}")
+async def admin_geo_results(
+    election_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> dict[str, Any]:
+    """Territorial participation overlay for org elections (includes pilot tallies)."""
+    response.headers["Cache-Control"] = "no-store"
+    row = await session.execute(
+        select(Election, ElectionTally)
+        .join(ElectionTally, ElectionTally.election_id == Election.id)
+        .where(
+            Election.id == election_id,
+            Election.organization_id == claims.org_id,
+            Election.status == "TALLIED",
+        )
+    )
+    result = row.one_or_none()
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Election tally not found for this organization",
+        )
+    election, _tally = result
+    return await build_public_results_collection(session, election)

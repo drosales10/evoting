@@ -17,7 +17,7 @@ El archivo de referencia es `docs/Padron_Administrativo.xlsx`, hoja `Datos`. La 
 | `Documento` | `dni` | Texto obligatorio; único por organización. |
 | `Correo electrónico` | `email` | Texto obligatorio; se normaliza a minúsculas. No se exige una dirección con `@` porque el archivo fuente contiene identificadores que no tienen formato de correo convencional. |
 | `Estatus` | `status` | `Activo` → `ACTIVE`; `Inactivo` → `INACTIVE`. |
-| `Tipo` | `member_type` | Texto opcional. |
+| `Tipo` | `member_type` | Categoría estatutaria (Cap. I S.V.I.F.): `Activo`, `Temporal`, `Asociado`, `Aspirante`, `Colectivo`, `Correspondiente`, `Honorario`. Texto libre; otros valores se contabilizan aparte. Para elegibilidad electoral de órganos solo votan `Activo`, `Temporal` y `Fundador` (vacío se trata como Activo, Art. 5). |
 | `Membresía` | `membership_months` | Entero; vacío equivale a `0`. |
 | `Decada` | `decade` | Entero opcional. |
 | `Año` | `graduation_year` | Entero opcional. |

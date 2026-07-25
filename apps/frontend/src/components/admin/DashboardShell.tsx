@@ -17,6 +17,7 @@ const DEFAULT_NAV: AdminNavItem[] = [
   { href: "/admin/padron", label: "Padrón" },
   { href: "/admin/territory", label: "Territorio" },
   { href: "/admin/elections", label: "Elecciones" },
+  { href: "/admin/resultados", label: "Resultados" },
   { href: "/admin/geovisor", label: "Geovisor" },
   { href: "/admin/audit", label: "Auditoría" },
 ];

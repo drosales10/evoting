@@ -9,6 +9,9 @@ type AdminOverview = {
   member_count: number;
   active_member_count: number;
   inactive_member_count: number;
+  member_type_counts: Array<{ member_type: string; count: number }>;
+  eligible_voter_count: number;
+  ineligible_voter_count: number;
   election_count: number;
   encrypted_ballot_count: number;
 };
@@ -124,6 +127,7 @@ type AdminElectionEligibilityMember = {
   dni: string;
   email: string;
   status: string;
+  member_type?: string | null;
   alive: boolean | null;
   eligible: boolean;
   reason: string;
@@ -954,24 +958,62 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
         <p>Organización: {overview.organization_slug}</p>
         <p>Roles activos: {overview.roles.join(", ")}</p>
       </div>
-      <div className="surface-grid" aria-label="Resumen administrativo">
-        <div className="surface-card">
-          <span className="eyebrow">Padrón · Total</span>
-          <h2>{overview.member_count}</h2>
-          <p>Miembros registrados</p>
+      <div className="space-y-4" aria-label="Resumen administrativo">
+        <div>
+          <span className="eyebrow">Padrón · Estatus</span>
+          <div className="surface-grid mt-2 !my-0 sm:!grid-cols-3 xl:!grid-cols-3">
+            <div className="surface-card">
+              <span className="eyebrow">Total</span>
+              <h2>{overview.member_count}</h2>
+              <p>Miembros registrados</p>
+            </div>
+            <div className="surface-card">
+              <span className="eyebrow">Estatus activos</span>
+              <h2 className="text-emerald-700 dark:text-emerald-300">{overview.active_member_count}</h2>
+              <p>Columna Estatus = Activo</p>
+            </div>
+            <div className="surface-card">
+              <span className="eyebrow">Estatus inactivos</span>
+              <h2 className="text-amber-700 dark:text-amber-300">{overview.inactive_member_count}</h2>
+              <p>Columna Estatus = Inactivo</p>
+            </div>
+          </div>
         </div>
-        <div className="surface-card">
-          <span className="eyebrow">Padrón · Activos</span>
-          <h2 className="text-emerald-700 dark:text-emerald-300">{overview.active_member_count}</h2>
-          <p>Estatus ACTIVE</p>
+        <div>
+          <span className="eyebrow">Padrón · Tipo</span>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Categorías estatutarias S.V.I.F. (Cap. I): Activo, Temporal, Asociado, Aspirante,
+            Colectivo, Correspondiente y Honorario.
+          </p>
+          <div className="surface-grid mt-2 !my-0 sm:!grid-cols-2 md:!grid-cols-3 xl:!grid-cols-4">
+            {(overview.member_type_counts ?? []).map((item) => (
+              <div className="surface-card" key={item.member_type}>
+                <span className="eyebrow">{item.member_type}</span>
+                <h2>{item.count}</h2>
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="surface-card">
-          <span className="eyebrow">Padrón · Inactivos</span>
-          <h2 className="text-amber-700 dark:text-amber-300">{overview.inactive_member_count}</h2>
-          <p>Estatus INACTIVE</p>
+        <div>
+          <span className="eyebrow">Padrón · Elegibilidad electoral</span>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            ACTIVE + Vivo + Tipo con voto (Activo/Temporal/Fundador).
+          </p>
+          <div className="surface-grid mt-2 !my-0 sm:!grid-cols-2 xl:!grid-cols-2">
+            <div className="surface-card">
+              <span className="eyebrow">Elegibles para votar</span>
+              <h2 className="text-emerald-700 dark:text-emerald-300">{overview.eligible_voter_count}</h2>
+            </div>
+            <div className="surface-card">
+              <span className="eyebrow">No elegibles</span>
+              <h2 className="text-amber-700 dark:text-amber-300">{overview.ineligible_voter_count}</h2>
+            </div>
+          </div>
         </div>
-        <div className="surface-card"><span className="eyebrow">Elecciones</span><h2>{overview.election_count}</h2><p>Procesos de la organización</p></div>
-        <div className="surface-card"><span className="eyebrow">Urna</span><h2>{overview.encrypted_ballot_count}</h2><p>Papeletas cifradas</p></div>
+        <div className="surface-grid !my-0 sm:!grid-cols-2 xl:!grid-cols-2">
+          <div className="surface-card"><span className="eyebrow">Elecciones</span><h2>{overview.election_count}</h2><p>Procesos de la organización</p></div>
+          <div className="surface-card"><span className="eyebrow">Urna</span><h2>{overview.encrypted_ballot_count}</h2><p>Papeletas cifradas</p></div>
+        </div>
       </div>
       {focus !== "elections" ? (
       <section className="empty-state" aria-labelledby="member-title">
@@ -1283,7 +1325,8 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
                       {member.registry_code ?? "Sin código"} · Documento {member.dni}
                     </p>
                     <p>
-                      Estado: {member.status} · Vivo: {member.alive === true ? "Sí" : member.alive === false ? "No" : "No confirmado"}
+                      Estado: {member.status} · Tipo: {member.member_type ?? "Sin tipo"} · Vivo:{" "}
+                      {member.alive === true ? "Sí" : member.alive === false ? "No" : "No confirmado"}
                     </p>
                     <p>Motivo: {member.reason}</p>
                   </div>

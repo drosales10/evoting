@@ -38,6 +38,8 @@ function CeremoniaClient() {
         const preferred =
           list.find((e) => e.id === requestedId) ??
           list.find((e) => e.has_live) ??
+          list.find((e) => e.broadcast_status === "ENDED") ??
+          list.find((e) => e.broadcast_status === "ARCHIVED") ??
           list.find((e) => e.broadcast_status) ??
           list[0];
         if (preferred) setElectionId(preferred.id);

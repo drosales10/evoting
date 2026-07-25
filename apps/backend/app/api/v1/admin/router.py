@@ -56,7 +56,11 @@ from app.services.member_deletion import (
     purge_stale_member_auth_records,
     race_condition_deletion_conflict,
 )
-from app.services.member_metrics import build_member_type_counts
+from app.services.member_metrics import (
+    VOTING_MEMBER_TYPE_KEYS,
+    build_member_type_counts,
+    evaluate_voter_eligibility,
+)
 from app.services.member_spreadsheet import (
     MAX_IMPORT_BYTES,
     MemberImportResult,
@@ -66,6 +70,11 @@ from app.services.member_spreadsheet import (
 )
 from app.services.tally_acta import build_official_acta
 from app.services.tally_artifact import artifact_sha256, verify_artifact
+from app.api.v1.public.router import (
+    PublicElectionResult,
+    PublicTallyArtifact,
+    PublicTallyVerification,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 ELECTION_MANAGER_ROLES = frozenset({"SUPER_ADMIN", "ELECTORAL_JUSTICE"})
@@ -90,6 +99,8 @@ class AdminOverviewResponse(BaseModel):
     active_member_count: int = Field(ge=0)
     inactive_member_count: int = Field(ge=0)
     member_type_counts: list[MemberTypeCount] = Field(default_factory=list)
+    eligible_voter_count: int = Field(ge=0)
+    ineligible_voter_count: int = Field(ge=0)
     election_count: int = Field(ge=0)
     encrypted_ballot_count: int = Field(ge=0)
 
@@ -518,6 +529,7 @@ class AdminElectionEligibilityMemberResponse(BaseModel):
     dni: str
     email: str
     status: str
+    member_type: str | None = None
     alive: bool | None
     eligible: bool
     reason: str
@@ -610,14 +622,16 @@ class AdminPositionResponse(BaseModel):
     created_at: datetime
 
 
-def _eligibility_reason(status_value: str, alive: bool | None, eligible: bool) -> str:
-    if eligible:
-        return "Cumple: miembro ACTIVE y Vivo confirmado"
-    if status_value != "ACTIVE":
-        return "Miembro INACTIVE"
-    if alive is False:
-        return "Vivo marcado como 0"
-    return "Vivo no confirmado"
+def _eligibility_reason(
+    status_value: str,
+    alive: bool | None,
+    member_type: str | None = None,
+) -> str:
+    return evaluate_voter_eligibility(
+        status=status_value,
+        alive=alive,
+        member_type=member_type,
+    ).reason
 
 
 async def _count_for_organization(
@@ -668,6 +682,47 @@ async def _member_type_counts(
             ((raw, int(value)) for raw, value in rows)
         )
     ]
+
+
+def _member_has_voting_type_clause():
+    """SQL predicate matching member_type_grants_vote()."""
+    normalized = func.lower(func.trim(Member.member_type))
+    return or_(
+        Member.member_type.is_(None),
+        func.trim(Member.member_type) == "",
+        normalized.in_(tuple(sorted(VOTING_MEMBER_TYPE_KEYS))),
+    )
+
+
+async def _eligible_voter_counts(
+    session: AsyncSession,
+    organization_id: UUID,
+) -> tuple[int, int]:
+    """Return (eligible_voter_count, ineligible_voter_count) for the live padrón."""
+    eligible = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(Member)
+                .where(
+                    Member.organization_id == organization_id,
+                    Member.status == "ACTIVE",
+                    Member.alive.is_(True),
+                    _member_has_voting_type_clause(),
+                )
+            )
+        ).scalar_one()
+    )
+    total = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(Member)
+                .where(Member.organization_id == organization_id)
+            )
+        ).scalar_one()
+    )
+    return eligible, max(0, total - eligible)
 
 
 async def _require_election_manager(
@@ -971,6 +1026,9 @@ async def admin_overview(
     member_count, active_member_count, inactive_member_count = await _member_status_counts(
         session, claims.org_id
     )
+    eligible_voter_count, ineligible_voter_count = await _eligible_voter_counts(
+        session, claims.org_id
+    )
     return AdminOverviewResponse(
         organization_slug=organization.slug,
         organization_name=organization.name,
@@ -979,6 +1037,8 @@ async def admin_overview(
         active_member_count=active_member_count,
         inactive_member_count=inactive_member_count,
         member_type_counts=await _member_type_counts(session, claims.org_id),
+        eligible_voter_count=eligible_voter_count,
+        ineligible_voter_count=ineligible_voter_count,
         election_count=await _count_for_organization(session, Election, claims.org_id),
         encrypted_ballot_count=await _count_for_organization(
             session, EncryptedBallot, claims.org_id
@@ -1382,6 +1442,69 @@ async def list_admin_elections(
     return [AdminElectionResponse.model_validate(election) for election in elections]
 
 
+@router.get("/elections/{election_id}/results", response_model=PublicElectionResult)
+async def get_admin_election_results(
+    election_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_election_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> PublicElectionResult:
+    """Return published tally for the org, including pilot/no-quorum tallies."""
+    response.headers["Cache-Control"] = "no-store"
+    row = (
+        await session.execute(
+            select(Election, ElectionTally)
+            .join(ElectionTally, ElectionTally.election_id == Election.id)
+            .where(
+                Election.id == election_id,
+                Election.organization_id == claims.org_id,
+                Election.status == "TALLIED",
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Election tally not found for this organization",
+        )
+    election, tally = row
+    try:
+        artifact_model = PublicTallyArtifact.model_validate(tally.artifact)
+        stored_sha = artifact_sha256(tally.artifact)
+        hash_matches = stored_sha == tally.artifact_sha256
+        public_key_pem = election.signing_public_key or election.public_key or ""
+        signature_valid = False
+        if public_key_pem and hash_matches:
+            loaded_key = load_pem_public_key(public_key_pem.encode("utf-8"))
+            if isinstance(loaded_key, RSAPublicKey):
+                signature_valid = verify_artifact(
+                    tally.artifact, tally.signature, loaded_key
+                )
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Election result verification failed",
+        ) from exc
+
+    return PublicElectionResult(
+        election_id=election.id,
+        title=election.title,
+        voting_type=election.voting_type,
+        ballot_count=tally.ballot_count,
+        published_at=tally.created_at,
+        artifact_sha256=tally.artifact_sha256,
+        public_key_sha256=artifact_model.public_key_sha256,
+        artifact=artifact_model,
+        signature=tally.signature,
+        public_key=public_key_pem,
+        verification=PublicTallyVerification(
+            artifact_sha256_matches=hash_matches,
+            signature_valid=bool(signature_valid),
+        ),
+        counts=artifact_model.counts,
+    )
+
+
 @router.post(
     "/elections",
     response_model=AdminElectionResponse,
@@ -1547,16 +1670,18 @@ async def open_election_registration(
         members_query = members_query.where(or_(*scope_filters))
     members = await session.scalars(members_query)
     for member in members:
-        member_eligible = member.status == "ACTIVE" and member.alive is True
+        decision = evaluate_voter_eligibility(
+            status=member.status,
+            alive=member.alive,
+            member_type=member.member_type,
+        )
         session.add(
             MemberElectionStatus(
                 organization_id=claims.org_id,
                 election_id=election.id,
                 member_id=member.id,
-                eligible=member_eligible,
-                eligibility_reason=_eligibility_reason(
-                    member.status, member.alive, member_eligible
-                ),
+                eligible=decision.eligible,
+                eligibility_reason=decision.reason,
                 has_voted=False,
             )
         )
@@ -2478,10 +2603,11 @@ async def list_election_eligibility_members(
             dni=member.dni,
             email=member.email,
             status=member.status,
+            member_type=member.member_type,
             alive=member.alive,
             eligible=snapshot.eligible,
             reason=snapshot.eligibility_reason
-            or _eligibility_reason(member.status, member.alive, snapshot.eligible),
+            or _eligibility_reason(member.status, member.alive, member.member_type),
         )
         for snapshot, member in rows
     ]

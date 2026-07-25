@@ -59,6 +59,33 @@ function pointCenters(geometry: Point | MultiPoint): Array<[number, number]> {
   return geometry.coordinates.map(([lng, lat]) => [lat, lng]);
 }
 
+function popupHtml(feature: Feature): string {
+  const name = String(feature.properties?.name ?? "");
+  const level = String(feature.properties?.level ?? "");
+  const voted = feature.properties?.voted_count;
+  const eligible = feature.properties?.eligible_count;
+  const pct = feature.properties?.participation_pct;
+  if (voted == null && eligible == null && pct == null) {
+    return `<strong>${name}</strong><br/>Nivel ${level}`;
+  }
+  return (
+    `<strong>${name}</strong><br/>Nivel ${level}` +
+    `<br/>Votaron: ${voted ?? "—"}` +
+    `<br/>Elegibles: ${eligible ?? "—"}` +
+    `<br/>Participación: ${pct != null ? `${pct}%` : "—"}`
+  );
+}
+
+function participationFill(feature: Feature | undefined): { color: string; fillOpacity: number } {
+  const level = String(feature?.properties?.level ?? "N2");
+  const base = LEVEL_COLORS[level] ?? "#1a5f4a";
+  const pct = Number(feature?.properties?.participation_pct);
+  if (Number.isFinite(pct) && pct > 0) {
+    return { color: base, fillOpacity: Math.min(0.7, 0.15 + pct / 150) };
+  }
+  return { color: base, fillOpacity: 0.25 };
+}
+
 export function AdminMapCanvas({
   data,
 }: {
@@ -101,11 +128,11 @@ export function AdminMapCanvas({
           key={JSON.stringify(polygons.features.map((f) => f.properties))}
           data={polygons}
           style={(feature) => {
-            const level = String(feature?.properties?.level ?? "N2");
+            const paint = participationFill(feature as Feature | undefined);
             return {
-              color: LEVEL_COLORS[level] ?? "#1a5f4a",
+              color: paint.color,
               weight: 2,
-              fillOpacity: 0.25,
+              fillOpacity: paint.fillOpacity,
             };
           }}
           pointToLayer={(_feature, latlng) =>
@@ -118,9 +145,7 @@ export function AdminMapCanvas({
             })
           }
           onEachFeature={(feature, layer) => {
-            const name = String(feature.properties?.name ?? "");
-            const level = String(feature.properties?.level ?? "");
-            layer.bindPopup(`<strong>${name}</strong><br/>Nivel ${level}`);
+            layer.bindPopup(popupHtml(feature));
           }}
         />
       ) : null}
@@ -142,7 +167,22 @@ export function AdminMapCanvas({
             <Popup>
               <strong>{String(feature.properties?.name ?? "")}</strong>
               <br />
-              Nivel {level}
+              Nivel {String(feature.properties?.level ?? "")}
+              {feature.properties?.voted_count != null ||
+              feature.properties?.eligible_count != null ||
+              feature.properties?.participation_pct != null ? (
+                <>
+                  <br />
+                  Votaron: {String(feature.properties?.voted_count ?? "—")}
+                  <br />
+                  Elegibles: {String(feature.properties?.eligible_count ?? "—")}
+                  <br />
+                  Participación:{" "}
+                  {feature.properties?.participation_pct != null
+                    ? `${String(feature.properties.participation_pct)}%`
+                    : "—"}
+                </>
+              ) : null}
             </Popup>
           </CircleMarker>
         );
@@ -166,6 +206,12 @@ export function AdminMapCanvas({
               <strong>{String(feature.properties?.name ?? "")}</strong>
               <br />
               Nivel {level} (sin geometría)
+              {feature.properties?.participation_pct != null ? (
+                <>
+                  <br />
+                  Participación: {String(feature.properties.participation_pct)}%
+                </>
+              ) : null}
             </Popup>
           </CircleMarker>
         );

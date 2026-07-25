@@ -44,6 +44,8 @@ type PadronSummary = {
   active_member_count: number;
   inactive_member_count: number;
   member_type_counts: Array<{ member_type: string; count: number }>;
+  eligible_voter_count: number;
+  ineligible_voter_count: number;
 };
 
 type TerritoryUnit = { id: string; code: string; name: string; parent_id?: string | null };
@@ -71,7 +73,15 @@ type MemberFormState = {
 
 type PanelMode = "preview" | "edit" | null;
 
-const SUGGESTED_MEMBER_TYPES = ["Activo", "Asociado", "Correspondiente", "Colectivo"] as const;
+const SUGGESTED_MEMBER_TYPES = [
+  "Activo",
+  "Temporal",
+  "Asociado",
+  "Aspirante",
+  "Colectivo",
+  "Correspondiente",
+  "Honorario",
+] as const;
 
 const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -175,6 +185,9 @@ export function PadronCatalog() {
         member_count: payload.member_count,
         active_member_count: payload.active_member_count,
         inactive_member_count: payload.inactive_member_count,
+        member_type_counts: payload.member_type_counts ?? [],
+        eligible_voter_count: payload.eligible_voter_count,
+        ineligible_voter_count: payload.ineligible_voter_count,
       });
     } catch {
       /* El listado sigue siendo usable sin el resumen. */
@@ -448,6 +461,11 @@ export function PadronCatalog() {
 
   return (
     <DashboardShell>
+      <datalist id="member-type-options">
+        {SUGGESTED_MEMBER_TYPES.map((type) => (
+          <option key={type} value={type} />
+        ))}
+      </datalist>
       <div className="space-y-6">
         <div>
           <h2 className="text-xl font-semibold">Padrón administrativo</h2>
@@ -458,25 +476,82 @@ export function PadronCatalog() {
           </p>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3" aria-label="Resumen del padrón">
-          <div className="card-panel">
-            <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Total</p>
-            <p className="mt-2 text-3xl font-semibold">{summary?.member_count ?? "—"}</p>
-            <p className="mt-1 text-sm text-[var(--muted)]">Miembros registrados</p>
+        <div className="space-y-3" aria-label="Resumen del padrón">
+          <div>
+            <p className="eyebrow mb-2">Estatus</p>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="card-panel">
+                <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Total</p>
+                <p className="mt-2 text-3xl font-semibold">{summary?.member_count ?? "—"}</p>
+                <p className="mt-1 text-sm text-[var(--muted)]">Miembros registrados</p>
+              </div>
+              <div className="card-panel">
+                <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                  Estatus activos
+                </p>
+                <p className="mt-2 text-3xl font-semibold text-emerald-700 dark:text-emerald-300">
+                  {summary?.active_member_count ?? "—"}
+                </p>
+                <p className="mt-1 text-sm text-[var(--muted)]">Columna Estatus = Activo</p>
+              </div>
+              <div className="card-panel">
+                <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                  Estatus inactivos
+                </p>
+                <p className="mt-2 text-3xl font-semibold text-amber-700 dark:text-amber-300">
+                  {summary?.inactive_member_count ?? "—"}
+                </p>
+                <p className="mt-1 text-sm text-[var(--muted)]">Columna Estatus = Inactivo</p>
+              </div>
+            </div>
           </div>
-          <div className="card-panel">
-            <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Activos</p>
-            <p className="mt-2 text-3xl font-semibold text-emerald-700 dark:text-emerald-300">
-              {summary?.active_member_count ?? "—"}
+          <div>
+            <p className="eyebrow mb-2">Tipo de miembro</p>
+            <p className="mb-2 text-sm text-[var(--muted)]">
+              Categorías del Capítulo I de los Estatutos S.V.I.F.: Activo y Temporal (voto
+              electoral de órganos), Asociado, Aspirante, Colectivo, Correspondiente y Honorario.
+              Otros tipos aparecen automáticamente si existen en el padrón.
             </p>
-            <p className="mt-1 text-sm text-[var(--muted)]">Estatus ACTIVE</p>
+            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+              {(summary?.member_type_counts ?? []).map((item) => (
+                <div className="card-panel" key={item.member_type}>
+                  <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                    {item.member_type}
+                  </p>
+                  <p className="mt-2 text-3xl font-semibold">{item.count}</p>
+                </div>
+              ))}
+              {!summary ? (
+                <div className="card-panel">
+                  <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Tipo</p>
+                  <p className="mt-2 text-3xl font-semibold">—</p>
+                </div>
+              ) : null}
+            </div>
           </div>
-          <div className="card-panel">
-            <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Inactivos</p>
-            <p className="mt-2 text-3xl font-semibold text-amber-700 dark:text-amber-300">
-              {summary?.inactive_member_count ?? "—"}
+          <div>
+            <p className="eyebrow mb-2">Elegibilidad electoral</p>
+            <p className="mb-2 text-sm text-[var(--muted)]">
+              ACTIVE + Vivo confirmado + Tipo con voto (Activo/Temporal/Fundador; vacío = Activo).
             </p>
-            <p className="mt-1 text-sm text-[var(--muted)]">Estatus INACTIVE</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="card-panel">
+                <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                  Elegibles para votar
+                </p>
+                <p className="mt-2 text-3xl font-semibold text-emerald-700 dark:text-emerald-300">
+                  {summary?.eligible_voter_count ?? "—"}
+                </p>
+              </div>
+              <div className="card-panel">
+                <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                  No elegibles
+                </p>
+                <p className="mt-2 text-3xl font-semibold text-amber-700 dark:text-amber-300">
+                  {summary?.ineligible_voter_count ?? "—"}
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -628,7 +703,8 @@ export function PadronCatalog() {
           />
           <input
             className="input-field"
-            placeholder="Tipo de miembro"
+            list="member-type-options"
+            placeholder="Tipo (Activo, Temporal, Asociado…)"
             value={form.member_type}
             onChange={(e) => setForm({ ...form, member_type: e.target.value })}
           />
@@ -1054,6 +1130,8 @@ export function PadronCatalog() {
                   Tipo de miembro
                   <input
                     className="input-field mt-1"
+                    list="member-type-options"
+                    placeholder="Activo, Temporal, Asociado, Aspirante…"
                     value={editForm.member_type}
                     onChange={(e) => setEditForm({ ...editForm, member_type: e.target.value })}
                   />

@@ -66,7 +66,10 @@ export function ClienteGeovisorClient({
         setElections(list);
         const preferred =
           list.find((e) => e.has_live) ??
-          list.find((e) => e.broadcast_status === "SCHEDULED" || e.broadcast_status === "ENDED") ??
+          list.find((e) => e.broadcast_status === "ENDED") ??
+          list.find((e) => e.broadcast_status === "ARCHIVED") ??
+          list.find((e) => e.broadcast_status === "SCHEDULED") ??
+          list.find((e) => e.broadcast_status) ??
           list.find((e) => e.status === "TALLIED") ??
           list.find((e) => e.status === "ACTIVE") ??
           list.find((e) => e.status === "CLOSED") ??
