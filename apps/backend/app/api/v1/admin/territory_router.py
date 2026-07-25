@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import require_admin
 from app.auth.tokens import AccessClaims
 from app.db.session import get_db_session
-from app.services.geo_features import build_admin_feature_collection, build_public_results_collection
 from app.models import (
     Election,
     ElectionTally,
@@ -23,6 +22,10 @@ from app.models import (
     ElectoralRegion,
     ElectoralState,
     Organization,
+)
+from app.services.geo_features import (
+    build_admin_feature_collection,
+    build_public_results_collection,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin-territory"])
