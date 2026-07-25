@@ -5,6 +5,7 @@ import type { PublicElectionResult } from "@evoting/shared";
 
 import { ResultsParticipationMap } from "@/components/results/ResultsParticipationMap";
 import { summarizeElectionResult } from "@/components/results/summarizeElectionResult";
+import { formatAppDateTime } from "@/lib/datetime";
 
 const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -167,7 +168,7 @@ export function ResultsDashboard({
             SHA-256 artefacto: <code>{result.artifact_sha256}</code>
           </p>
           <p className="text-[var(--muted)]">
-            Publicado: {new Date(result.published_at).toLocaleString("es-ES")}
+            Publicado: {formatAppDateTime(result.published_at)}
           </p>
           <details className="pt-2">
             <summary className="cursor-pointer font-semibold">Artefacto firmado</summary>

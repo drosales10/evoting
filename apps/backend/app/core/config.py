@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     seed_admin_org_slug: str | None = None
     seed_admin_org_name: str | None = None
     seed_admin_role: str = "ELECTORAL_JUSTICE"
+    # IANA timezone for display/business-day semantics (storage remains UTC).
+    app_timezone: str = "America/Caracas"
 
     model_config = SettingsConfigDict(
         env_file=(WORKSPACE_ROOT / ".env", WORKSPACE_ROOT / "apps/backend/.env"),

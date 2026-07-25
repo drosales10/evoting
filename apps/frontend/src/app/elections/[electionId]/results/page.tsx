@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { getPublicElectionResult } from "@/lib/api";
+import { formatAppDateTime } from "@/lib/datetime";
 
 export const dynamic = "force-dynamic";
 
@@ -71,7 +72,7 @@ export default async function ElectionResultsPage({ params }: ResultsPageProps) 
           <br />
           <code>{result.public_key_sha256}</code>
         </p>
-        <p>Publicado: {new Date(result.published_at).toLocaleString("es-ES")}</p>
+        <p>Publicado: {formatAppDateTime(result.published_at)}</p>
         <details>
           <summary>Mostrar artefacto firmado para verificación independiente</summary>
           <p>

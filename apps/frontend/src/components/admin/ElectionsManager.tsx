@@ -1,13 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import Link from "next/link";
 
 import { CeremonyAdminPanel } from "@/components/admin/CeremonyAdminPanel";
 import { DashboardShell } from "@/components/admin/DashboardShell";
 import {
   AdminOverview,
+  type CicloSection,
   type ElectionsTab,
 } from "@/components/admin/admin-overview";
+import { datetimeLocalToUtcIso, formatAppDateTime } from "@/lib/datetime";
 
 type TerritoryUnit = { id: string; code: string; name: string; parent_id?: string | null };
 type Election = {
@@ -56,6 +59,18 @@ const TABS: Array<{ id: ElectionsTab; label: string; hint: string }> = [
   },
 ];
 
+const CICLO_SECTIONS: Array<{ id: CicloSection; label: string; hint: string }> = [
+  { id: "metricas", label: "Métricas", hint: "Indicadores del proceso electoral" },
+  { id: "portal", label: "Portal público", hint: "Ceremonia YouTube y difusión" },
+  { id: "ciclo", label: "Ciclo electoral", hint: "Registro → escrutinio" },
+  {
+    id: "preview",
+    label: "Vista previa",
+    hint: "Igual que verá el público",
+  },
+  { id: "archivada", label: "Archivada", hint: "Cerradas y escrutadas" },
+];
+
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: "Borrador",
   REGISTRATION: "Registro",
@@ -86,6 +101,9 @@ function statusClass(status: string): string {
 
 export function ElectionsManager() {
   const [tab, setTab] = useState<ElectionsTab>("ciclo");
+  const [cicloSection, setCicloSection] = useState<CicloSection>("ciclo");
+  const [cicloMenuOpen, setCicloMenuOpen] = useState(false);
+  const cicloMenuRef = useRef<HTMLDivElement>(null);
   const [focusElectionId, setFocusElectionId] = useState<string | null>(null);
   const [regions, setRegions] = useState<TerritoryUnit[]>([]);
   const [states, setStates] = useState<TerritoryUnit[]>([]);
@@ -97,6 +115,7 @@ export function ElectionsManager() {
   const [busy, setBusy] = useState(false);
   const [ceremonyElectionId, setCeremonyElectionId] = useState("");
   const [overviewKey, setOverviewKey] = useState(0);
+  const [copiedElectionId, setCopiedElectionId] = useState<string | null>(null);
 
   const statesForRegion = useMemo(
     () => states.filter((s) => !regionId || s.parent_id === regionId),
@@ -131,6 +150,49 @@ export function ElectionsManager() {
   }, [elections]);
 
   const activeTab = TABS.find((item) => item.id === tab) ?? TABS[0];
+  const activeCicloSection =
+    CICLO_SECTIONS.find((item) => item.id === cicloSection) ?? CICLO_SECTIONS[2];
+
+  const previewElections = useMemo(
+    () =>
+      elections.filter((e) =>
+        ["REGISTRATION", "FREEZE", "ACTIVE", "CLOSED", "TALLIED"].includes(e.status),
+      ),
+    [elections],
+  );
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  useEffect(() => {
+    if (!cicloMenuOpen) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!cicloMenuRef.current?.contains(event.target as Node)) {
+        setCicloMenuOpen(false);
+      }
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setCicloMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [cicloMenuOpen]);
+
+  const navigateTab = useCallback((next: ElectionsTab, electionId?: string) => {
+    setTab(next);
+    if (next === "ciclo") setCicloSection("ciclo");
+    if (electionId) setFocusElectionId(electionId);
+    if (electionId && ["REGISTRATION", "FREEZE", "ACTIVE", "CLOSED", "TALLIED"].includes(
+      elections.find((e) => e.id === electionId)?.status ?? "",
+    )) {
+      setCeremonyElectionId(electionId);
+    }
+  }, [elections]);
 
   async function load() {
     const [rRes, sRes, eRes] = await Promise.all([
@@ -157,20 +219,6 @@ export function ElectionsManager() {
     }
   }
 
-  useEffect(() => {
-    void load();
-  }, []);
-
-  const navigateTab = useCallback((next: ElectionsTab, electionId?: string) => {
-    setTab(next);
-    if (electionId) setFocusElectionId(electionId);
-    if (electionId && ["REGISTRATION", "FREEZE", "ACTIVE", "CLOSED", "TALLIED"].includes(
-      elections.find((e) => e.id === electionId)?.status ?? "",
-    )) {
-      setCeremonyElectionId(electionId);
-    }
-  }, [elections]);
-
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -185,8 +233,8 @@ export function ElectionsManager() {
         body: JSON.stringify({
           title: String(form.get("title") ?? "").trim(),
           voting_type: "SLATE_PLURALITY",
-          start_time: new Date(String(form.get("start_time") ?? "")).toISOString(),
-          end_time: new Date(String(form.get("end_time") ?? "")).toISOString(),
+          start_time: datetimeLocalToUtcIso(String(form.get("start_time") ?? "")),
+          end_time: datetimeLocalToUtcIso(String(form.get("end_time") ?? "")),
           quorum_threshold_pct: Number(form.get("quorum_threshold_pct") ?? 30),
           scope_level: scope,
           region_id: scope === "REGIONAL" || scope === "STATE" ? regionId || null : null,
@@ -254,59 +302,212 @@ export function ElectionsManager() {
 
         <div className="elections-panel" role="tabpanel">
           {tab === "ciclo" ? (
-            <div className="space-y-6">
-              <section
-                id="ceremonia-escrutinio"
-                className="scroll-mt-6 space-y-4 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 dark:bg-[var(--surface)]"
-              >
-                <div>
-                  <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--primary)]">
-                    Portal público
-                  </p>
-                  <h3 className="mt-1 text-lg font-semibold">Ceremonia de escrutinio (YouTube)</h3>
-                  <p className="mt-1 text-sm text-[var(--muted)]">
-                    Configura el live que verán miembros y público en el geovisor cliente y en
-                    resultados.
-                  </p>
+            <div className="space-y-5">
+              <div className="ciclo-toolbar" ref={cicloMenuRef}>
+                <button
+                  type="button"
+                  className="ciclo-hamburger"
+                  aria-expanded={cicloMenuOpen}
+                  aria-controls="ciclo-section-menu"
+                  aria-label="Menú de secciones del ciclo"
+                  onClick={() => setCicloMenuOpen((open) => !open)}
+                >
+                  <span />
+                  <span />
+                  <span />
+                </button>
+                <div className="ciclo-toolbar__title">
+                  <p className="eyebrow">Sección del ciclo</p>
+                  <h3>{activeCicloSection.label}</h3>
+                  <p className="text-xs text-[var(--muted)]">{activeCicloSection.hint}</p>
                 </div>
-                {ceremonyCandidates.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-[var(--line)] px-4 py-6 text-sm text-[var(--muted)]">
-                    No hay elecciones listas para ceremonia. Crea una y ábrela al menos en registro.
-                  </p>
-                ) : (
-                  <>
-                    <label className="block max-w-xl text-sm font-bold">
-                      Elección
-                      <select
-                        className="input-field mt-1"
-                        value={ceremonyElectionId}
-                        onChange={(e) => setCeremonyElectionId(e.target.value)}
+                {cicloMenuOpen ? (
+                  <nav
+                    id="ciclo-section-menu"
+                    className="ciclo-menu"
+                    aria-label="Secciones del ciclo electoral"
+                  >
+                    {CICLO_SECTIONS.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`ciclo-menu__item${cicloSection === item.id ? " is-active" : ""}`}
+                        onClick={() => {
+                          setCicloSection(item.id);
+                          setCicloMenuOpen(false);
+                        }}
                       >
-                        <option value="">Selecciona una elección</option>
-                        {ceremonyCandidates.map((election) => (
-                          <option key={election.id} value={election.id}>
-                            {election.title} · {STATUS_LABEL[election.status] ?? election.status}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {ceremonyElection ? (
-                      <CeremonyAdminPanel
-                        electionId={ceremonyElection.id}
-                        electionTitle={ceremonyElection.title}
-                      />
-                    ) : null}
-                  </>
-                )}
-              </section>
+                        <span className="ciclo-menu__label">{item.label}</span>
+                        <span className="ciclo-menu__hint">{item.hint}</span>
+                      </button>
+                    ))}
+                  </nav>
+                ) : null}
+              </div>
 
-              <AdminOverview
-                key={`ciclo-${overviewKey}`}
-                focus="elections"
-                electionsTab="ciclo"
-                focusElectionId={focusElectionId}
-                onNavigateTab={navigateTab}
-              />
+              {cicloSection === "metricas" ? (
+                <AdminOverview
+                  key={`metricas-${overviewKey}`}
+                  focus="elections"
+                  electionsTab="ciclo"
+                  cicloSection="metricas"
+                  focusElectionId={focusElectionId}
+                  onNavigateTab={navigateTab}
+                  onSelectCicloSection={setCicloSection}
+                />
+              ) : null}
+
+              {cicloSection === "portal" ? (
+                <section
+                  id="ceremonia-escrutinio"
+                  className="scroll-mt-6 space-y-4 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5"
+                >
+                  <div>
+                    <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--primary)]">
+                      Portal público
+                    </p>
+                    <h3 className="mt-1 text-lg font-semibold">Ceremonia de escrutinio (YouTube)</h3>
+                    <p className="mt-1 text-sm text-[var(--muted)]">
+                      Configura el live que verán miembros y público en el geovisor cliente y en
+                      resultados.
+                    </p>
+                  </div>
+                  {ceremonyCandidates.length === 0 ? (
+                    <p className="rounded-lg border border-dashed border-[var(--line)] px-4 py-6 text-sm text-[var(--muted)]">
+                      No hay elecciones listas para ceremonia. Crea una y ábrela al menos en registro.
+                    </p>
+                  ) : (
+                    <>
+                      <label className="block max-w-xl text-sm font-bold">
+                        Elección
+                        <select
+                          className="input-field mt-1"
+                          value={ceremonyElectionId}
+                          onChange={(e) => setCeremonyElectionId(e.target.value)}
+                        >
+                          <option value="">Selecciona una elección</option>
+                          {ceremonyCandidates.map((election) => (
+                            <option key={election.id} value={election.id}>
+                              {election.title} · {STATUS_LABEL[election.status] ?? election.status}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {ceremonyElection ? (
+                        <CeremonyAdminPanel
+                          electionId={ceremonyElection.id}
+                          electionTitle={ceremonyElection.title}
+                        />
+                      ) : null}
+                    </>
+                  )}
+                </section>
+              ) : null}
+
+              {cicloSection === "ciclo" ? (
+                <AdminOverview
+                  key={`ciclo-${overviewKey}`}
+                  focus="elections"
+                  electionsTab="ciclo"
+                  cicloSection="ciclo"
+                  focusElectionId={focusElectionId}
+                  onNavigateTab={navigateTab}
+                  onSelectCicloSection={setCicloSection}
+                />
+              ) : null}
+
+              {cicloSection === "preview" ? (
+                <section className="ciclo-preview card-panel space-y-5">
+                  <div>
+                    <p className="eyebrow">Vista previa</p>
+                    <h3 className="text-lg font-semibold">Igual que verá el público</h3>
+                    <p className="mt-1 text-sm text-[var(--muted)]">
+                      Simulación de la superficie pública. No incluye datos del padrón ni acciones
+                      administrativas.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Link className="button button-primary inline-button" href="/elections" target="_blank">
+                      Abrir portal público
+                    </Link>
+                    <Link className="button button-secondary inline-button" href="/cliente" target="_blank">
+                      Abrir área cliente
+                    </Link>
+                    <Link
+                      className="button button-secondary inline-button"
+                      href="/cliente/ceremonia"
+                      target="_blank"
+                    >
+                      Ver ceremonia
+                    </Link>
+                  </div>
+                  <div className="ciclo-preview__frame" aria-label="Simulación portal público">
+                    <div className="ciclo-preview__chrome">
+                      <span>eVoting · Portal público</span>
+                    </div>
+                    <div className="ciclo-preview__body">
+                      <p className="eyebrow">Portal público</p>
+                      <h4 className="text-2xl font-semibold">Elecciones</h4>
+                      <p className="mt-1 text-sm text-[var(--muted)]">
+                        Solo se muestran convocatorias y estados aprobados para publicación.
+                      </p>
+                      {previewElections.length === 0 ? (
+                        <div className="mt-4 rounded-xl border border-dashed border-[var(--line)] px-4 py-6 text-sm text-[var(--muted)]">
+                          No hay elecciones publicables todavía.
+                        </div>
+                      ) : (
+                        <ul className="mt-4 space-y-3">
+                          {previewElections.map((election) => (
+                            <li
+                              key={election.id}
+                              className="rounded-xl border border-[var(--line)] bg-[var(--background)] p-4"
+                            >
+                              <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                                {STATUS_LABEL[election.status] ?? election.status}
+                              </p>
+                              <p className="mt-1 font-semibold">{election.title}</p>
+                              <p className="text-xs text-[var(--muted)]">
+                                Alcance {election.scope_level ?? "NATIONAL"} · Inicio{" "}
+                                {formatAppDateTime(election.start_time)}
+                              </p>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {election.status === "TALLIED" ? (
+                                  <Link
+                                    className="text-xs font-bold text-[var(--primary)] underline"
+                                    href={`/elections/${election.id}/results`}
+                                    target="_blank"
+                                  >
+                                    Ver resultados
+                                  </Link>
+                                ) : null}
+                                <Link
+                                  className="text-xs font-bold text-[var(--primary)] underline"
+                                  href="/cliente/ceremonia"
+                                  target="_blank"
+                                >
+                                  Ceremonia
+                                </Link>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              ) : null}
+
+              {cicloSection === "archivada" ? (
+                <AdminOverview
+                  key={`archivada-${overviewKey}`}
+                  focus="elections"
+                  electionsTab="ciclo"
+                  cicloSection="archivada"
+                  focusElectionId={focusElectionId}
+                  onNavigateTab={navigateTab}
+                  onSelectCicloSection={setCicloSection}
+                />
+              ) : null}
             </div>
           ) : null}
 
@@ -332,7 +533,22 @@ export function ElectionsManager() {
                             <span className={statusClass(election.status)}>
                               {STATUS_LABEL[election.status] ?? election.status}
                             </span>
+                            <p className="mt-1 break-all font-mono text-[10px] text-[var(--muted)]">
+                              {election.id}
+                            </p>
                             <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className="text-xs font-bold text-[var(--primary)] underline"
+                                onClick={() => {
+                                  void navigator.clipboard.writeText(election.id).then(() => {
+                                    setCopiedElectionId(election.id);
+                                    window.setTimeout(() => setCopiedElectionId(null), 2000);
+                                  });
+                                }}
+                              >
+                                {copiedElectionId === election.id ? "ID copiado" : "Copiar ID"}
+                              </button>
                               <button
                                 type="button"
                                 className="text-xs font-bold text-[var(--primary)] underline"
@@ -398,14 +614,14 @@ export function ElectionsManager() {
                   Título
                   <input className="input-field mt-1" name="title" minLength={3} required />
                 </label>
-                <label className="text-sm font-bold">
-                  Inicio
-                  <input className="input-field mt-1" name="start_time" type="datetime-local" required />
-                </label>
-                <label className="text-sm font-bold">
-                  Fin
-                  <input className="input-field mt-1" name="end_time" type="datetime-local" required />
-                </label>
+                  <label className="text-sm font-bold">
+                    Inicio ({process.env.NEXT_PUBLIC_APP_TIMEZONE || "America/Caracas"})
+                    <input className="input-field mt-1" name="start_time" type="datetime-local" required />
+                  </label>
+                  <label className="text-sm font-bold">
+                    Fin ({process.env.NEXT_PUBLIC_APP_TIMEZONE || "America/Caracas"})
+                    <input className="input-field mt-1" name="end_time" type="datetime-local" required />
+                  </label>
                 <label className="text-sm font-bold">
                   Quórum (%)
                   <input

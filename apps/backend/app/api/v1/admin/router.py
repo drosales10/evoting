@@ -1750,6 +1750,49 @@ async def freeze_election_roster(
     )
 
 
+async def _count_members_in_election_scope(
+    session: AsyncSession,
+    *,
+    organization_id: UUID,
+    election: Election,
+) -> int:
+    """Count padrón members that belong to the election territorial scope."""
+    members_query = select(func.count(Member.id)).where(Member.organization_id == organization_id)
+    if election.scope_level == "REGIONAL" and election.region_id:
+        region = await session.scalar(
+            select(ElectoralRegion).where(
+                ElectoralRegion.id == election.region_id,
+                ElectoralRegion.organization_id == organization_id,
+            )
+        )
+        region_labels = {
+            value.strip().upper()
+            for value in ((region.code if region else None), (region.name if region else None))
+            if value
+        }
+        scope_filters = [Member.region_id == election.region_id]
+        if region_labels:
+            scope_filters.append(func.upper(func.trim(Member.region)).in_(region_labels))
+        members_query = members_query.where(or_(*scope_filters))
+    elif election.scope_level == "STATE" and election.state_id:
+        state = await session.scalar(
+            select(ElectoralState).where(
+                ElectoralState.id == election.state_id,
+                ElectoralState.organization_id == organization_id,
+            )
+        )
+        state_labels = {
+            value.strip().upper()
+            for value in ((state.code if state else None), (state.name if state else None))
+            if value
+        }
+        scope_filters = [Member.state_id == election.state_id]
+        if state_labels:
+            scope_filters.append(func.upper(func.trim(Member.section)).in_(state_labels))
+        members_query = members_query.where(or_(*scope_filters))
+    return int((await session.execute(members_query)).scalar_one())
+
+
 @router.post(
     "/elections/{election_id}/activate",
     response_model=AdminElectionActivationResponse,
@@ -1804,12 +1847,10 @@ async def activate_election(
             )
         ).one()
     )
-    current_member_count = int(
-        (
-            await session.execute(
-                select(func.count(Member.id)).where(Member.organization_id == claims.org_id)
-            )
-        ).scalar_one()
+    current_member_count = await _count_members_in_election_scope(
+        session,
+        organization_id=claims.org_id,
+        election=election,
     )
     if snapshot_member_count == 0:
         raise HTTPException(
@@ -1819,7 +1860,10 @@ async def activate_election(
     if snapshot_member_count != current_member_count:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Member roster changed after freeze; review and recreate the election",
+            detail=(
+                "Member roster changed after freeze within this election scope; "
+                "review and recreate the election"
+            ),
         )
     if eligible_member_count == 0:
         raise HTTPException(

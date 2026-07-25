@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { getPublicElections } from "@/lib/api";
+import { formatAppDateTime } from "@/lib/datetime";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,7 @@ export default async function ElectionsPage() {
                 <p>{election.voting_type}</p>
               </div>
               <time dateTime={election.start_time}>
-                Inicio: {new Date(election.start_time).toLocaleString("es-ES")}
+                Inicio: {formatAppDateTime(election.start_time)}
               </time>
               {election.status === "TALLIED" ? (
                 <Link className="button button-secondary inline-button" href={`/elections/${election.id}/results`}>

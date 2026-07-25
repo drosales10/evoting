@@ -2,6 +2,9 @@
 
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
+import { adminFetch } from "@/lib/admin-api";
+import { datetimeLocalToUtcIso, formatAppDateTime } from "@/lib/datetime";
+
 type AdminOverview = {
   organization_slug: string;
   organization_name: string;
@@ -214,7 +217,7 @@ function apiErrorDetail(payload: unknown): string | null {
 async function requestApiJson<T>(url: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(url, init);
+    response = await adminFetch(url, init);
   } catch {
     throw new Error(
       `No se pudo contactar la API administrativa en ${url}. ` +
@@ -241,8 +244,8 @@ async function requestApiJson<T>(url: string, init: RequestInit = {}): Promise<T
     if (response.status === 401) {
       throw new Error(
         detail
-          ? `La sesión administrativa no está activa: ${detail}.`
-          : "La sesión administrativa no está activa o expiró (HTTP 401). Inicia sesión nuevamente.",
+          ? `La sesión administrativa no está activa: ${detail}. Vuelve a iniciar sesión en /admin/login.`
+          : "La sesión administrativa expiró (HTTP 401). Vuelve a iniciar sesión en /admin/login.",
       );
     }
     throw new Error(
@@ -254,10 +257,16 @@ async function requestApiJson<T>(url: string, init: RequestInit = {}): Promise<T
 }
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("es-CO", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  return formatAppDateTime(value);
+}
+
+async function copyText(value: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export type ElectionsTab =
@@ -268,18 +277,29 @@ export type ElectionsTab =
   | "estructura"
   | "elegibles";
 
+export type CicloSection =
+  | "metricas"
+  | "portal"
+  | "ciclo"
+  | "preview"
+  | "archivada";
+
 type AdminOverviewProps = {
   focus?: "all" | "elections" | "members";
   electionsTab?: ElectionsTab;
+  cicloSection?: CicloSection;
   focusElectionId?: string | null;
   onNavigateTab?: (tab: ElectionsTab, electionId?: string) => void;
+  onSelectCicloSection?: (section: CicloSection) => void;
 };
 
 export function AdminOverview({
   focus = "all",
   electionsTab = "ciclo",
+  cicloSection = "ciclo",
   focusElectionId = null,
   onNavigateTab,
+  onSelectCicloSection,
 }: AdminOverviewProps) {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [members, setMembers] = useState<AdminMember[]>([]);
@@ -290,6 +310,10 @@ export function AdminOverview({
   const [eligibilityMembers, setEligibilityMembers] = useState<AdminElectionEligibilityMember[]>([]);
   const [eligibilityFilter, setEligibilityFilter] = useState<EligibilityFilter>("all");
   const [eligibilityBusy, setEligibilityBusy] = useState(false);
+  const [eligibilityPage, setEligibilityPage] = useState(1);
+  const [assignmentEligibleMembers, setAssignmentEligibleMembers] = useState<
+    AdminElectionEligibilityMember[]
+  >([]);
   const [slateElection, setSlateElection] = useState<AdminElection | null>(null);
   const [slates, setSlates] = useState<AdminSlate[]>([]);
   const [selectedSlate, setSelectedSlate] = useState<AdminSlate | null>(null);
@@ -310,6 +334,7 @@ export function AdminOverview({
   const [auditEvents, setAuditEvents] = useState<AdminElectionAudit[]>([]);
   const [auditBusy, setAuditBusy] = useState(false);
   const [photoBusyId, setPhotoBusyId] = useState<string | null>(null);
+  const [copiedElectionId, setCopiedElectionId] = useState<string | null>(null);
 
   async function loadData() {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -364,6 +389,7 @@ export function AdminOverview({
     }
     if (electionsTab === "elegibles" && (target.status === "REGISTRATION" || target.status === "FREEZE")) {
       void loadEligibility(target);
+      void loadAssignmentEligibleMembers(target);
     }
     // Solo reaccionar a cambios de pestaña / elección enfocada.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -501,8 +527,8 @@ export function AdminOverview({
         body: JSON.stringify({
           title: String(form.get("title") ?? "").trim(),
           voting_type: "SLATE_PLURALITY",
-          start_time: new Date(startTime).toISOString(),
-          end_time: new Date(endTime).toISOString(),
+          start_time: datetimeLocalToUtcIso(startTime),
+          end_time: datetimeLocalToUtcIso(endTime),
           quorum_threshold_pct: Number(form.get("quorum_threshold_pct") ?? 30),
           scope_level: String(form.get("scope_level") ?? "NATIONAL"),
           region_id: String(form.get("region_id") ?? "").trim() || null,
@@ -805,11 +831,31 @@ export function AdminOverview({
         return;
       }
       setEligibilityMembers(payload);
+      setEligibilityPage(1);
     } catch {
       setMessage("No se pudo contactar la API administrativa.");
       setEligibilityMembers([]);
+      setEligibilityPage(1);
     } finally {
       setEligibilityBusy(false);
+    }
+  }
+
+  async function loadAssignmentEligibleMembers(election: AdminElection) {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    try {
+      const response = await fetch(
+        `${apiUrl}/api/v1/admin/elections/${election.id}/eligibility/members?eligible=true`,
+        { credentials: "include", cache: "no-store" },
+      );
+      const payload = (await response.json()) as AdminElectionEligibilityMember[] & ApiError;
+      if (!response.ok) {
+        setAssignmentEligibleMembers([]);
+        return;
+      }
+      setAssignmentEligibleMembers(payload);
+    } catch {
+      setAssignmentEligibleMembers([]);
     }
   }
 
@@ -991,14 +1037,20 @@ export function AdminOverview({
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
   const isElectionsFocus = focus === "elections";
-  const showCiclo = !isElectionsFocus || electionsTab === "ciclo";
+  const inCicloTab = isElectionsFocus && electionsTab === "ciclo";
+  const showMetricsStrip =
+    (isElectionsFocus && electionsTab !== "ciclo") ||
+    (inCicloTab && cicloSection === "metricas");
+  const showCiclo = !isElectionsFocus || (inCicloTab && cicloSection === "ciclo");
+  const showArchivada = inCicloTab && cicloSection === "archivada";
   const showProcesos = !isElectionsFocus || electionsTab === "procesos";
-  const showElectionList = showCiclo || showProcesos;
-  const showLifecycleActions = !isElectionsFocus || electionsTab === "ciclo";
+  const showElectionList = showCiclo || showProcesos || showArchivada;
+  const showLifecycleActions = !isElectionsFocus || (inCicloTab && cicloSection === "ciclo");
   const showPlanchas = !isElectionsFocus || electionsTab === "planchas" || electionsTab === "elegibles";
   const showEstructura = !isElectionsFocus || electionsTab === "estructura";
   const showElegiblesDetail = !isElectionsFocus || electionsTab === "elegibles";
-  const showAudit = !isElectionsFocus || electionsTab === "ciclo";
+  const showAudit =
+    !isElectionsFocus || (inCicloTab && (cicloSection === "ciclo" || cicloSection === "archivada"));
 
   const structureElections = elections.filter(
     (e) => e.status === "DRAFT" || e.status === "REGISTRATION",
@@ -1008,6 +1060,21 @@ export function AdminOverview({
   const slateReadyElections = elections.filter(
     (e) => e.status === "REGISTRATION" || e.status === "FREEZE",
   );
+  const ELIGIBILITY_PAGE_SIZE = 5;
+  const eligibilityTotalPages = Math.max(
+    1,
+    Math.ceil(eligibilityMembers.length / ELIGIBILITY_PAGE_SIZE),
+  );
+  const eligibilityPageSafe = Math.min(eligibilityPage, eligibilityTotalPages);
+  const eligibilityPageItems = eligibilityMembers.slice(
+    (eligibilityPageSafe - 1) * ELIGIBILITY_PAGE_SIZE,
+    eligibilityPageSafe * ELIGIBILITY_PAGE_SIZE,
+  );
+  const visibleElections = showArchivada
+    ? elections.filter((e) => e.status === "TALLIED" || e.status === "CLOSED")
+    : showCiclo && isElectionsFocus
+      ? elections.filter((e) => e.status !== "TALLIED")
+      : elections;
 
   return (
     <>
@@ -1017,7 +1084,7 @@ export function AdminOverview({
           <p>Organización: {overview.organization_slug}</p>
           <p>Roles activos: {overview.roles.join(", ")}</p>
         </div>
-      ) : (
+      ) : showMetricsStrip ? (
         <div className="elections-compact-stats" aria-label="Indicadores electorales">
           <div className="surface-card">
             <span className="eyebrow">Elecciones</span>
@@ -1031,8 +1098,32 @@ export function AdminOverview({
             <span className="eyebrow">Elegibles padrón</span>
             <h2 className="text-emerald-700 dark:text-emerald-300">{overview.eligible_voter_count}</h2>
           </div>
+          {inCicloTab && cicloSection === "metricas" ? (
+            <>
+              <div className="surface-card">
+                <span className="eyebrow">En ciclo</span>
+                <h2>
+                  {
+                    elections.filter((e) =>
+                      ["DRAFT", "REGISTRATION", "FREEZE", "ACTIVE", "CLOSED"].includes(e.status),
+                    ).length
+                  }
+                </h2>
+              </div>
+              <div className="surface-card">
+                <span className="eyebrow">Archivadas</span>
+                <h2>{elections.filter((e) => e.status === "TALLIED").length}</h2>
+              </div>
+              <div className="surface-card">
+                <span className="eyebrow">Activas</span>
+                <h2 className="text-emerald-700 dark:text-emerald-300">
+                  {elections.filter((e) => e.status === "ACTIVE").length}
+                </h2>
+              </div>
+            </>
+          ) : null}
         </div>
-      )}
+      ) : null}
       {!isElectionsFocus ? (
       <div className="space-y-4" aria-label="Resumen administrativo">
         <div>
@@ -1177,18 +1268,48 @@ export function AdminOverview({
       ) : null}
       {showElectionList ? (
       <section aria-labelledby="election-list-title" className="mt-4">
-        <span className="eyebrow">{showLifecycleActions ? "Ciclo electoral" : "Procesos"}</span>
+        <span className="eyebrow">
+          {showArchivada ? "Archivada" : showLifecycleActions ? "Ciclo electoral" : "Procesos"}
+        </span>
         <h2 id="election-list-title" className="text-xl font-semibold">
-          {showLifecycleActions ? "Registro → escrutinio" : "Elecciones registradas"}
+          {showArchivada
+            ? "Elecciones cerradas y escrutadas"
+            : showLifecycleActions
+              ? "Registro → escrutinio"
+              : "Elecciones registradas"}
         </h2>
         {message && isElectionsFocus ? <p className="form-message" role="status">{message}</p> : null}
-        {elections.length === 0 ? <div className="empty-state"><p>No hay elecciones creadas para esta organización.</p></div> : (
-          <div className="election-list">{elections.map((election) => (
+        {visibleElections.length === 0 ? (
+          <div className="empty-state">
+            <p>
+              {showArchivada
+                ? "No hay elecciones archivadas (cerradas o escrutadas)."
+                : "No hay elecciones creadas para esta organización."}
+            </p>
+          </div>
+        ) : (
+          <div className="election-list">{visibleElections.map((election) => (
             <article className="election-item" key={election.id}>
               <div>
                 <h3>{election.title}</h3>
                 <p>{election.voting_type} · Quórum {election.quorum_threshold_pct}% · Alcance {election.scope_level ?? "NATIONAL"}</p>
                 <p>Estado: {election.status}</p>
+                <p className="mt-2 break-all font-mono text-xs text-[var(--muted)]">
+                  ID: {election.id}
+                </p>
+                <button
+                  type="button"
+                  className="mt-1 text-xs font-bold text-[var(--primary)] underline"
+                  onClick={() => {
+                    void copyText(election.id).then((ok) => {
+                      if (!ok) return;
+                      setCopiedElectionId(election.id);
+                      window.setTimeout(() => setCopiedElectionId(null), 2000);
+                    });
+                  }}
+                >
+                  {copiedElectionId === election.id ? "ID copiado" : "Copiar ID"}
+                </button>
               </div>
               <div>
                 <time dateTime={election.start_time}>{formatDate(election.start_time)}</time>
@@ -1296,12 +1417,22 @@ export function AdminOverview({
                       election.status === "TALLIED" ||
                       election.status === "REGISTRATION" ||
                       election.status === "FREEZE") && (
-                    <a
-                      className="button button-secondary inline-button"
-                      href="#ceremonia-escrutinio"
-                    >
-                      Ir a Ceremonia YouTube
-                    </a>
+                    onSelectCicloSection ? (
+                      <button
+                        className="button button-secondary inline-button"
+                        type="button"
+                        onClick={() => onSelectCicloSection("portal")}
+                      >
+                        Ir a Ceremonia YouTube
+                      </button>
+                    ) : (
+                      <a
+                        className="button button-secondary inline-button"
+                        href="#ceremonia-escrutinio"
+                      >
+                        Ir a Ceremonia YouTube
+                      </a>
+                    )
                   )}
                   {showLifecycleActions && (election.status === "REGISTRATION" || election.status === "FREEZE") ? (
                     <button
@@ -1348,7 +1479,34 @@ export function AdminOverview({
                       Ver auditoría
                     </button>
                   ) : null}
-                  {!showLifecycleActions ? (
+                  {showArchivada ? (
+                    <>
+                      <button
+                        className="button button-secondary inline-button"
+                        type="button"
+                        onClick={() => void loadAudit(election)}
+                      >
+                        Ver auditoría
+                      </button>
+                      {election.status === "TALLIED" ? (
+                        <a
+                          className="button button-secondary inline-button"
+                          href={`/admin/resultados/${election.id}`}
+                        >
+                          Ver resultados
+                        </a>
+                      ) : null}
+                      <a
+                        className="button button-secondary inline-button"
+                        href={`/elections/${election.id}/results`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Vista pública
+                      </a>
+                    </>
+                  ) : null}
+                  {!showLifecycleActions && !showArchivada ? (
                     <>
                       <button
                         className="button button-secondary inline-button"
@@ -1462,17 +1620,11 @@ export function AdminOverview({
           ) : null}
         </section>
       ) : null}
-      {isElectionsFocus && (electionsTab === "planchas" || electionsTab === "elegibles") ? (
+      {isElectionsFocus && electionsTab === "planchas" ? (
         <section className="empty-state mt-4" aria-labelledby="plancha-picker-title">
-          <span className="eyebrow">{electionsTab === "elegibles" ? "Asignar elegibles" : "Gestionar planchas"}</span>
-          <h2 id="plancha-picker-title">
-            {electionsTab === "elegibles" ? "Candidatos por cargo" : "Planchas de la elección"}
-          </h2>
-          <p>
-            {electionsTab === "elegibles"
-              ? "Asigna miembros elegibles a los cargos de cada plancha. La selección del voto sigue siendo por plancha (slate_id)."
-              : "Las planchas se crean en REGISTRATION. En FREEZE solo se revisan."}
-          </p>
+          <span className="eyebrow">Gestionar planchas</span>
+          <h2 id="plancha-picker-title">Planchas de la elección</h2>
+          <p>Las planchas se crean en REGISTRATION. En FREEZE solo se revisan.</p>
           <label className="mt-3 block max-w-xl text-sm font-bold" htmlFor="slate-election-picker">
             Elección
             <select
@@ -1483,7 +1635,6 @@ export function AdminOverview({
                 const next = elections.find((item) => item.id === event.target.value);
                 if (next) {
                   void loadSlates(next);
-                  if (electionsTab === "elegibles") void loadEligibility(next);
                 } else {
                   setSlateElection(null);
                   setSlates([]);
@@ -1507,82 +1658,215 @@ export function AdminOverview({
           ) : null}
         </section>
       ) : null}
-      {showElegiblesDetail && eligibilityElection ? (
-        <section className="empty-state" aria-labelledby="eligibility-title">
-          <span className="eyebrow">Snapshot de elegibilidad</span>
-          <h2 id="eligibility-title">Elegibilidad: {eligibilityElection.title}</h2>
+
+      {isElectionsFocus && electionsTab === "elegibles" ? (
+        <section className="empty-state mt-4" aria-labelledby="asignar-elegibles-title">
+          <span className="eyebrow">Asignar elegibles</span>
+          <h2 id="asignar-elegibles-title">Candidatos por cargo</h2>
           <p>
-            Este detalle corresponde al snapshot creado al abrir el registro. No se muestran fotos ni
-            datos de la urna.
+            Asigna miembros elegibles a los cargos de cada plancha. La selección del voto sigue
+            siendo por plancha (slate_id).
           </p>
-          <label htmlFor="eligibility-filter">Filtrar registros</label>
-          <select
-            id="eligibility-filter"
-            value={eligibilityFilter}
-            onChange={(event) => {
-              const nextFilter = event.target.value as EligibilityFilter;
-              setEligibilityFilter(nextFilter);
-              void loadEligibility(eligibilityElection, nextFilter);
-            }}
-            disabled={eligibilityBusy}
-          >
-            <option value="all">Todos</option>
-            <option value="eligible">Solo elegibles</option>
-            <option value="ineligible">Solo no elegibles</option>
-          </select>
-          {eligibilityBusy ? <p className="form-message">Cargando elegibilidad…</p> : null}
-          {!eligibilityBusy && eligibilityMembers.length === 0 ? (
-            <p className="form-message">No hay registros para este filtro.</p>
-          ) : (
-            <div className="election-list" aria-live="polite">
-              {eligibilityMembers.map((member) => (
-                <article className="election-item" key={member.member_id}>
-                  <div>
-                    <h3>{member.full_name}</h3>
-                    <p>
-                      {member.registry_code ?? "Sin código"} · Documento {member.dni}
-                    </p>
-                    <p>
-                      Estado: {member.status} · Tipo: {member.member_type ?? "Sin tipo"} · Vivo:{" "}
-                      {member.alive === true ? "Sí" : member.alive === false ? "No" : "No confirmado"}
-                    </p>
-                    <p>Motivo: {member.reason}</p>
-                  </div>
-                  <strong>{member.eligible ? "Elegible" : "No elegible"}</strong>
-                </article>
+          <label className="mt-3 block max-w-xl text-sm font-bold" htmlFor="elegibles-election-picker">
+            Elección
+            <select
+              id="elegibles-election-picker"
+              className="input-field mt-1"
+              value={slateElection?.id ?? ""}
+              onChange={(event) => {
+                const next = elections.find((item) => item.id === event.target.value);
+                if (next) {
+                  void loadSlates(next);
+                  void loadEligibility(next);
+                  void loadAssignmentEligibleMembers(next);
+                } else {
+                  setSlateElection(null);
+                  setSlates([]);
+                  setSelectedSlate(null);
+                  setCandidates([]);
+                  setEligibilityElection(null);
+                  setEligibilityMembers([]);
+                  setAssignmentEligibleMembers([]);
+                }
+              }}
+            >
+              <option value="">Seleccionar elección en registro o congelada</option>
+              {slateReadyElections.map((election) => (
+                <option key={election.id} value={election.id}>
+                  {election.title} · {election.status}
+                </option>
               ))}
+            </select>
+          </label>
+          {slateReadyElections.length === 0 ? (
+            <p className="form-message">
+              No hay elecciones en REGISTRATION o FREEZE. Abre el registro desde Ciclo electoral.
+            </p>
+          ) : null}
+
+          {slateElection ? (
+            <div className="mt-5 space-y-4">
+              <label className="block max-w-xl text-sm font-bold" htmlFor="elegibles-slate-picker">
+                Plancha a asignar
+                <select
+                  id="elegibles-slate-picker"
+                  className="input-field mt-1"
+                  value={selectedSlate?.id ?? ""}
+                  onChange={(event) => {
+                    const next = slates.find((item) => item.id === event.target.value);
+                    if (next) void loadCandidates(next);
+                    else {
+                      setSelectedSlate(null);
+                      setCandidates([]);
+                    }
+                  }}
+                >
+                  <option value="">Seleccionar plancha</option>
+                  {slates.map((slate) => (
+                    <option key={slate.id} value={slate.id}>
+                      {slate.name} · {slate.candidate_count} candidatos
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {selectedSlate ? (
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--background)] p-4" aria-labelledby="candidate-title">
+                  <h3 id="candidate-title" className="text-base font-semibold">
+                    Candidatos: {selectedSlate.name}
+                  </h3>
+                  {candidates.length === 0 ? (
+                    <p className="mt-2 text-sm text-[var(--muted)]">No hay candidatos registrados.</p>
+                  ) : (
+                    <div className="election-list mt-3">
+                      {candidates.map((candidate) => (
+                        <article className="election-item" key={candidate.id}>
+                          <div>
+                            <h4>
+                              {candidate.position_code} · {candidate.position_title}
+                            </h4>
+                            <p>
+                              {candidate.member_full_name} ·{" "}
+                              {candidate.member_registry_code ?? candidate.member_dni}
+                            </p>
+                            <p>{candidate.bio ?? "Sin biografía"}</p>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                  {slateElection.status === "REGISTRATION" ? (
+                    <form className="auth-form mt-4" onSubmit={handleCreateCandidate}>
+                      <label htmlFor="candidate-position-input">Posición / cargo</label>
+                      <select id="candidate-position-input" name="candidate_position_id" required>
+                        <option value="">Selecciona una posición</option>
+                        {positions.map((position) => (
+                          <option value={position.id} key={position.id}>
+                            {position.code} · {position.title}
+                          </option>
+                        ))}
+                      </select>
+                      <label htmlFor="candidate-member-input">
+                        Miembro elegible
+                        <span className="mt-0.5 block text-xs font-normal text-[var(--muted)]">
+                          Solo el snapshot territorial de esta elección
+                          {slateElection.scope_level
+                            ? ` (${slateElection.scope_level})`
+                            : ""}
+                          : {assignmentEligibleMembers.length} elegible
+                          {assignmentEligibleMembers.length === 1 ? "" : "s"}
+                        </span>
+                      </label>
+                      <select
+                        id="candidate-member-input"
+                        name="candidate_member_id"
+                        required
+                        disabled={assignmentEligibleMembers.length === 0}
+                      >
+                        <option value="">
+                          {assignmentEligibleMembers.length === 0
+                            ? "No hay elegibles en este territorio"
+                            : "Selecciona un miembro elegible"}
+                        </option>
+                        {assignmentEligibleMembers.map((member) => (
+                          <option value={member.member_id} key={member.member_id}>
+                            {member.full_name} · {member.registry_code ?? member.dni}
+                          </option>
+                        ))}
+                      </select>
+                      <label htmlFor="candidate-bio-input">Biografía</label>
+                      <textarea id="candidate-bio-input" name="candidate_bio" maxLength={5000} rows={4} />
+                      <button
+                        className="button button-primary"
+                        type="submit"
+                        disabled={
+                          candidateBusy ||
+                          positions.length === 0 ||
+                          assignmentEligibleMembers.length === 0
+                        }
+                      >
+                        {candidateBusy ? "Registrando…" : "Asignar elegible al cargo"}
+                      </button>
+                    </form>
+                  ) : (
+                    <p className="mt-3 text-sm text-[var(--muted)]">
+                      La elección está congelada: solo lectura de candidatos.
+                    </p>
+                  )}
+                  {slateMessage ? <p className="form-message" role="status">{slateMessage}</p> : null}
+                </div>
+              ) : null}
             </div>
-          )}
+          ) : null}
         </section>
       ) : null}
+
       {showPlanchas && slateElection ? (
-        <section className="empty-state" aria-labelledby="slate-title">
+        <section className="empty-state mt-4" aria-labelledby="slate-title">
           <span className="eyebrow">Registro de planchas</span>
           <h2 id="slate-title">Planchas: {slateElection.title}</h2>
           <p>
-            Las planchas se crean solo en REGISTRATION. En FREEZE se pueden revisar, pero no modificar.
+            Las planchas se crean solo en REGISTRATION. En FREEZE se pueden revisar, pero no
+            modificar.
           </p>
-          {slates.length === 0 ? <p className="form-message">No hay planchas registradas.</p> : (
+          {slates.length === 0 ? (
+            <p className="form-message">No hay planchas registradas.</p>
+          ) : (
             <div className="election-list">
               {slates.map((slate) => (
                 <article className="election-item" key={slate.id}>
                   <div>
                     <h3>{slate.name}</h3>
-                    <p>{slate.slogan ?? "Sin lema"} · Estado {slate.status}</p>
+                    <p>
+                      {slate.slogan ?? "Sin lema"} · Estado {slate.status}
+                    </p>
                     <p>Candidatos registrados: {slate.candidate_count}</p>
                   </div>
-                  <button
-                    className="button button-secondary"
-                    type="button"
-                    onClick={() => void loadCandidates(slate)}
-                  >
-                    {electionsTab === "elegibles" ? "Asignar / ver candidatos" : "Ver candidatos"}
-                  </button>
+                  {electionsTab === "planchas" || !isElectionsFocus ? (
+                    <button
+                      className="button button-secondary"
+                      type="button"
+                      onClick={() => void loadCandidates(slate)}
+                    >
+                      Ver candidatos
+                    </button>
+                  ) : (
+                    <button
+                      className="button button-secondary"
+                      type="button"
+                      onClick={() => void loadCandidates(slate)}
+                    >
+                      Usar en asignación
+                    </button>
+                  )}
                 </article>
               ))}
             </div>
           )}
-          {electionsTab !== "elegibles" && slateElection.status === "REGISTRATION" ? (
+          {(electionsTab === "planchas" ||
+            electionsTab === "elegibles" ||
+            !isElectionsFocus) &&
+          slateElection.status === "REGISTRATION" ? (
             <form className="auth-form" onSubmit={handleCreateSlate}>
               <label htmlFor="slate-name-input">Nombre de plancha</label>
               <input id="slate-name-input" name="slate_name" minLength={2} maxLength={150} required />
@@ -1602,26 +1886,33 @@ export function AdminOverview({
               </button>
             </form>
           ) : null}
-          {selectedSlate && (electionsTab === "elegibles" || !isElectionsFocus || electionsTab === "planchas") ? (
-            <div className="empty-state" aria-labelledby="candidate-title">
-              <h3 id="candidate-title">Candidatos: {selectedSlate.name}</h3>
-              {candidates.length === 0 ? <p>No hay candidatos registrados.</p> : (
+          {selectedSlate && (electionsTab === "planchas" || !isElectionsFocus) ? (
+            <div className="empty-state" aria-labelledby="candidate-title-planchas">
+              <h3 id="candidate-title-planchas">Candidatos: {selectedSlate.name}</h3>
+              {candidates.length === 0 ? (
+                <p>No hay candidatos registrados.</p>
+              ) : (
                 <div className="election-list">
                   {candidates.map((candidate) => (
                     <article className="election-item" key={candidate.id}>
                       <div>
-                        <h4>{candidate.position_code} · {candidate.position_title}</h4>
-                        <p>{candidate.member_full_name} · {candidate.member_registry_code ?? candidate.member_dni}</p>
+                        <h4>
+                          {candidate.position_code} · {candidate.position_title}
+                        </h4>
+                        <p>
+                          {candidate.member_full_name} ·{" "}
+                          {candidate.member_registry_code ?? candidate.member_dni}
+                        </p>
                         <p>{candidate.bio ?? "Sin biografía"}</p>
                       </div>
                     </article>
                   ))}
                 </div>
               )}
-              {(electionsTab === "elegibles" || !isElectionsFocus) && slateElection.status === "REGISTRATION" ? (
+              {!isElectionsFocus && slateElection.status === "REGISTRATION" ? (
                 <form className="auth-form" onSubmit={handleCreateCandidate}>
-                  <label htmlFor="candidate-position-input">Posición / cargo</label>
-                  <select id="candidate-position-input" name="candidate_position_id" required>
+                  <label htmlFor="candidate-position-input-legacy">Posición / cargo</label>
+                  <select id="candidate-position-input-legacy" name="candidate_position_id" required>
                     <option value="">Selecciona una posición</option>
                     {positions.map((position) => (
                       <option value={position.id} key={position.id}>
@@ -1629,8 +1920,8 @@ export function AdminOverview({
                       </option>
                     ))}
                   </select>
-                  <label htmlFor="candidate-member-input">Miembro elegible</label>
-                  <select id="candidate-member-input" name="candidate_member_id" required>
+                  <label htmlFor="candidate-member-input-legacy">Miembro elegible</label>
+                  <select id="candidate-member-input-legacy" name="candidate_member_id" required>
                     <option value="">Selecciona un miembro</option>
                     {members.map((member) => (
                       <option value={member.id} key={member.id}>
@@ -1638,18 +1929,118 @@ export function AdminOverview({
                       </option>
                     ))}
                   </select>
-                  <label htmlFor="candidate-bio-input">Biografía</label>
-                  <textarea id="candidate-bio-input" name="candidate_bio" maxLength={5000} rows={4} />
-                  <button className="button button-primary" type="submit" disabled={candidateBusy || positions.length === 0}>
+                  <label htmlFor="candidate-bio-input-legacy">Biografía</label>
+                  <textarea
+                    id="candidate-bio-input-legacy"
+                    name="candidate_bio"
+                    maxLength={5000}
+                    rows={4}
+                  />
+                  <button
+                    className="button button-primary"
+                    type="submit"
+                    disabled={candidateBusy || positions.length === 0}
+                  >
                     {candidateBusy ? "Registrando…" : "Asignar elegible al cargo"}
                   </button>
                 </form>
               ) : null}
             </div>
           ) : null}
-          {slateMessage ? <p className="form-message" role="status">{slateMessage}</p> : null}
+          {slateMessage && electionsTab !== "elegibles" ? (
+            <p className="form-message" role="status">
+              {slateMessage}
+            </p>
+          ) : null}
         </section>
       ) : null}
+
+      {showElegiblesDetail && eligibilityElection ? (
+        <section className="empty-state mt-4" aria-labelledby="eligibility-title">
+          <span className="eyebrow">Snapshot de elegibilidad</span>
+          <h2 id="eligibility-title">Elegibilidad: {eligibilityElection.title}</h2>
+          <p>
+            Este detalle corresponde al snapshot creado al abrir el registro. No se muestran fotos
+            ni datos de la urna.
+          </p>
+          <label htmlFor="eligibility-filter">Filtrar registros</label>
+          <select
+            id="eligibility-filter"
+            value={eligibilityFilter}
+            onChange={(event) => {
+              const nextFilter = event.target.value as EligibilityFilter;
+              setEligibilityFilter(nextFilter);
+              setEligibilityPage(1);
+              void loadEligibility(eligibilityElection, nextFilter);
+            }}
+            disabled={eligibilityBusy}
+          >
+            <option value="all">Todos</option>
+            <option value="eligible">Solo elegibles</option>
+            <option value="ineligible">Solo no elegibles</option>
+          </select>
+          {eligibilityBusy ? <p className="form-message">Cargando elegibilidad…</p> : null}
+          {!eligibilityBusy && eligibilityMembers.length === 0 ? (
+            <p className="form-message">No hay registros para este filtro.</p>
+          ) : !eligibilityBusy ? (
+            <>
+              <p className="mt-3 text-xs text-[var(--muted)]">
+                Mostrando {(eligibilityPageSafe - 1) * ELIGIBILITY_PAGE_SIZE + 1}–
+                {Math.min(eligibilityPageSafe * ELIGIBILITY_PAGE_SIZE, eligibilityMembers.length)} de{" "}
+                {eligibilityMembers.length}
+              </p>
+              <div className="election-list" aria-live="polite">
+                {eligibilityPageItems.map((member) => (
+                  <article className="election-item" key={member.member_id}>
+                    <div>
+                      <h3>{member.full_name}</h3>
+                      <p>
+                        {member.registry_code ?? "Sin código"} · Documento {member.dni}
+                      </p>
+                      <p>
+                        Estado: {member.status} · Tipo: {member.member_type ?? "Sin tipo"} · Vivo:{" "}
+                        {member.alive === true
+                          ? "Sí"
+                          : member.alive === false
+                            ? "No"
+                            : "No confirmado"}
+                      </p>
+                      <p>Motivo: {member.reason}</p>
+                    </div>
+                    <strong>{member.eligible ? "Elegible" : "No elegible"}</strong>
+                  </article>
+                ))}
+              </div>
+              {eligibilityMembers.length > ELIGIBILITY_PAGE_SIZE ? (
+                <div className="eligibility-pager" role="navigation" aria-label="Paginación del snapshot">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    disabled={eligibilityPageSafe <= 1}
+                    onClick={() => setEligibilityPage((page) => Math.max(1, page - 1))}
+                  >
+                    Anterior
+                  </button>
+                  <span className="eligibility-pager__status">
+                    Página {eligibilityPageSafe} de {eligibilityTotalPages}
+                  </span>
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    disabled={eligibilityPageSafe >= eligibilityTotalPages}
+                    onClick={() =>
+                      setEligibilityPage((page) => Math.min(eligibilityTotalPages, page + 1))
+                    }
+                  >
+                    Siguiente
+                  </button>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </section>
+      ) : null}
+
       {showEstructura && selectedElection ? (
         <section className="empty-state" aria-labelledby="position-title">
           <span className="eyebrow">Estructura de elección</span>

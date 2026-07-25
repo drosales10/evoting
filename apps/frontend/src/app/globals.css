@@ -325,7 +325,7 @@
     @apply mt-3;
   }
   .ballot-receipt-actions {
-    @apply mt-4 flex justify-center;
+    @apply mt-4 flex flex-col items-center justify-center gap-2;
   }
 
   /* Módulo admin · Elecciones (pestañas) */
@@ -377,7 +377,7 @@
     @apply min-h-[12rem];
   }
   .elections-compact-stats {
-    @apply mb-4 grid gap-3 sm:grid-cols-3;
+    @apply mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3;
   }
   .elections-status {
     @apply mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide;
@@ -399,5 +399,86 @@
   }
   .elections-status--tallied {
     @apply bg-violet-100 text-violet-900 dark:bg-violet-950 dark:text-violet-200;
+  }
+
+  .ciclo-toolbar {
+    @apply relative flex items-start gap-3 rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-3 md:p-4;
+  }
+  .ciclo-toolbar__title h3 {
+    @apply text-lg font-semibold text-[var(--ink)];
+    font-family: var(--font-sans);
+  }
+  .ciclo-hamburger {
+    @apply flex h-11 w-11 shrink-0 flex-col items-center justify-center gap-1.5 rounded-xl border border-[var(--line)] bg-[var(--background)] transition hover:border-[var(--primary)];
+  }
+  .ciclo-hamburger span {
+    @apply block h-0.5 w-5 rounded-full bg-[var(--ink)];
+  }
+  .ciclo-menu {
+    @apply absolute left-3 top-[calc(100%-0.25rem)] z-30 flex w-[min(100%-1.5rem,20rem)] flex-col gap-1 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-2 shadow-lg dark:shadow-black/40;
+  }
+  .ciclo-menu__item {
+    @apply rounded-lg px-3 py-2.5 text-left transition hover:bg-[var(--background)];
+  }
+  .ciclo-menu__item.is-active {
+    @apply bg-[var(--accent)] dark:bg-[var(--accent)];
+  }
+  .ciclo-menu__label {
+    @apply block text-sm font-bold text-[var(--ink)];
+  }
+  .ciclo-menu__hint {
+    @apply mt-0.5 block text-xs text-[var(--muted)];
+  }
+  .ciclo-preview__frame {
+    @apply overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--background)];
+  }
+  .ciclo-preview__chrome {
+    @apply border-b border-[var(--line)] bg-[var(--surface)] px-4 py-2 text-xs font-semibold text-[var(--muted)];
+  }
+  .ciclo-preview__body {
+    @apply p-5 md:p-6;
+  }
+  .eligibility-pager {
+    @apply mt-4 flex flex-wrap items-center justify-center gap-3;
+  }
+  .eligibility-pager__status {
+    @apply text-sm font-semibold text-[var(--muted)];
+  }
+}
+
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 6mm;
+  }
+
+  body.printing-ballot-receipt * {
+    visibility: hidden !important;
+  }
+
+  body.printing-ballot-receipt #ballot-receipt-print-root,
+  body.printing-ballot-receipt #ballot-receipt-print-root * {
+    visibility: visible !important;
+  }
+
+  body.printing-ballot-receipt #ballot-receipt-print-root {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 72mm !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 8px !important;
+    border: 1px dashed #222 !important;
+    border-radius: 0 !important;
+    background: #fff !important;
+    color: #111 !important;
+    box-shadow: none !important;
+    font-family: "Courier New", Courier, monospace !important;
+  }
+
+  body.printing-ballot-receipt .no-print,
+  body.printing-ballot-receipt .ballot-receipt-actions {
+    display: none !important;
   }
 }

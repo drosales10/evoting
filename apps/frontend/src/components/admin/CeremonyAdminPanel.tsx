@@ -7,6 +7,7 @@ import {
   statusLabel,
   type CeremonyBroadcast,
 } from "@/components/ceremony/CeremonyPlayer";
+import { datetimeLocalToUtcIso } from "@/lib/datetime";
 
 type AdminBroadcast = CeremonyBroadcast & {
   id: string;
@@ -111,7 +112,7 @@ export function CeremonyAdminPanel({
             title: form.title,
             description: form.description || null,
             scheduled_start_at: form.scheduled_start_at
-              ? new Date(form.scheduled_start_at).toISOString()
+              ? datetimeLocalToUtcIso(form.scheduled_start_at)
               : null,
           }),
         },

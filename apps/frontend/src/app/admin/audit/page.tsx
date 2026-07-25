@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
+import { formatAppDateTime } from "@/lib/datetime";
 
 type Election = { id: string; title: string; status: string };
 type AuditEvent = {
@@ -98,7 +99,7 @@ export default function AdminAuditPage() {
               {events.map((event) => (
                 <tr key={event.id} className="border-b border-[var(--line)]/70">
                   <td className="px-2 py-2 whitespace-nowrap">
-                    {new Date(event.created_at).toLocaleString("es-CO")}
+                    {formatAppDateTime(event.created_at)}
                   </td>
                   <td className="px-2 py-2 font-semibold">{event.event_type}</td>
                   <td className="px-2 py-2 font-mono text-xs">{event.actor_hash ?? "—"}</td>

@@ -36,6 +36,14 @@ for (const dir of searchDirs) {
   applyEnvFile(path.join(dir, ".env"));
 }
 
+// Mirror backend APP_TIMEZONE into the public frontend var when unset.
+if (!process.env.NEXT_PUBLIC_APP_TIMEZONE && process.env.APP_TIMEZONE) {
+  process.env.NEXT_PUBLIC_APP_TIMEZONE = process.env.APP_TIMEZONE;
+}
+if (!process.env.NEXT_PUBLIC_APP_LOCALE && process.env.APP_LOCALE) {
+  process.env.NEXT_PUBLIC_APP_LOCALE = process.env.APP_LOCALE;
+}
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@evoting/shared"],

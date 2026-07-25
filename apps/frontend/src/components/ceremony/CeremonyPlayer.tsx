@@ -1,5 +1,7 @@
 "use client";
 
+import { formatAppDateTime } from "@/lib/datetime";
+
 export type CeremonyMilestone = {
   type: string;
   label: string;
@@ -79,7 +81,7 @@ export function CeremonyPlayer({ broadcast }: { broadcast: CeremonyBroadcast }) 
               <span className="font-semibold">{milestone.label}</span>
               <span className="text-[var(--muted)]">
                 {" · "}
-                {new Date(milestone.at).toLocaleString("es-ES")}
+                {formatAppDateTime(milestone.at)}
               </span>
               {milestone.note ? (
                 <p className="text-[var(--muted)]">{milestone.note}</p>
