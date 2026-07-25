@@ -5,8 +5,8 @@ Esta fase implementa el paso controlado desde la configuración de una elección
 ## Estados implementados
 
 - `DRAFT`: se pueden configurar posiciones. La elección todavía no tiene snapshot de elegibilidad.
-- `REGISTRATION`: se abrió el registro y se creó un snapshot de elegibilidad filtrado por alcance territorial.
-- `FREEZE`: el snapshot quedó congelado y ya no se puede modificar mediante estos endpoints.
+- `REGISTRATION`: se abrió el registro y se creó un snapshot de elegibilidad filtrado por alcance territorial. Aún se pueden agregar cargos/posiciones faltantes.
+- `FREEZE`: el snapshot quedó congelado y ya no se puede modificar mediante estos endpoints (tampoco la estructura de cargos).
 
 Las transiciones permitidas son únicamente `DRAFT → REGISTRATION → FREEZE`.
 

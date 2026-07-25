@@ -9,6 +9,7 @@ No modifica `encrypted_ballots` ni crea relaciones entre candidatos, miembros y 
 ## Reglas de estado
 
 - Las planchas y candidatos se pueden crear únicamente cuando la elección está en `REGISTRATION`.
+- Los cargos/posiciones se pueden crear en `DRAFT` o `REGISTRATION` (antes de `FREEZE`).
 - Se pueden consultar durante `REGISTRATION` y `FREEZE`.
 - En `FREEZE` la operación es de solo lectura.
 - La elección debe pertenecer a la organización del token ADMIN.

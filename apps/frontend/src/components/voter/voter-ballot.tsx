@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
+
+import { VoterBallotReceipt } from "@/components/voter/voter-ballot-receipt";
 
 type VoterCandidate = {
   id: string;
@@ -38,6 +40,12 @@ type VoterBallotResponse = {
   ballot_id: string;
   recorded_at: string;
 };
+
+type BallotBlocker =
+  | "election_unavailable"
+  | "not_authorized"
+  | "already_voted"
+  | null;
 
 function toBase64(value: ArrayBuffer | Uint8Array): string {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
@@ -89,11 +97,7 @@ async function encryptSelection(
     false,
     ["encrypt"],
   );
-  const aesKey = await crypto.subtle.generateKey(
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["encrypt"],
-  );
+  const aesKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const nonceBytes = crypto.getRandomValues(new Uint8Array(16));
   const nonce = toHex(nonceBytes.buffer);
@@ -108,10 +112,7 @@ async function encryptSelection(
     ciphertext: toBase64(ciphertext),
     key_version: election.key_version,
   });
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(encryptedPayload),
-  );
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(encryptedPayload));
   return {
     encryptedPayload,
     receiptHash: toHex(digest),
@@ -119,7 +120,51 @@ async function encryptSelection(
   };
 }
 
+function mapLoadError(status: number, detail?: string): { blocker: BallotBlocker; message: string } {
+  const normalized = (detail ?? "").toLowerCase();
+  if (status === 403 || normalized.includes("not eligible") || normalized.includes("autoriz")) {
+    return {
+      blocker: "not_authorized",
+      message: "No tiene autorización para votar en esta elección.",
+    };
+  }
+  if (
+    status === 409 ||
+    normalized.includes("not accepting") ||
+    normalized.includes("not accepting votes")
+  ) {
+    return {
+      blocker: "election_unavailable",
+      message: "La elección no está aceptando votos en este momento.",
+    };
+  }
+  if (normalized.includes("already cast") || normalized.includes("ya registr")) {
+    return {
+      blocker: "already_voted",
+      message: "Esta sesión ya registró su voto para esta elección.",
+    };
+  }
+  return {
+    blocker: null,
+    message: detail ?? "No se pudo cargar la elección.",
+  };
+}
+
+function blockerCopy(blocker: BallotBlocker): string | null {
+  if (blocker === "election_unavailable") {
+    return "La elección no está aceptando votos en este momento.";
+  }
+  if (blocker === "not_authorized") {
+    return "No tiene autorización para votar en esta elección.";
+  }
+  if (blocker === "already_voted") {
+    return "Esta sesión ya registró su voto para esta elección.";
+  }
+  return null;
+}
+
 export function VoterBallot() {
+  const slateGroupId = useId();
   const [electionId, setElectionId] = useState("");
   const [election, setElection] = useState<VoterElection | null>(null);
   const [selectedSlate, setSelectedSlate] = useState("");
@@ -128,16 +173,28 @@ export function VoterBallot() {
   const [busy, setBusy] = useState(false);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [voterSessionReady, setVoterSessionReady] = useState(false);
+  const [blocker, setBlocker] = useState<BallotBlocker>(null);
 
   useEffect(() => {
     setVoterSessionReady(Boolean(window.sessionStorage.getItem("evoting_voter_csrf")));
     setSessionChecked(true);
   }, []);
 
+  const canEmit =
+    Boolean(election) &&
+    Boolean(selectedSlate) &&
+    !busy &&
+    !receipt &&
+    !election?.has_voted &&
+    blocker === null;
+
   async function loadElection() {
     setBusy(true);
     setMessage(null);
     setReceipt(null);
+    setBlocker(null);
+    setSelectedSlate("");
+    setElection(null);
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
       const response = await fetch(`${apiUrl}/api/v1/voter/elections/${electionId.trim()}`, {
@@ -146,11 +203,16 @@ export function VoterBallot() {
       });
       const payload = (await response.json()) as VoterElection & { detail?: string };
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo cargar la elección.");
+        const mapped = mapLoadError(response.status, payload.detail);
+        setBlocker(mapped.blocker);
+        setMessage(mapped.message);
         return;
       }
       setElection(payload);
-      setSelectedSlate(payload.slates[0]?.id ?? "");
+      if (payload.has_voted) {
+        setBlocker("already_voted");
+        setMessage("Esta sesión ya registró su voto para esta elección.");
+      }
     } catch {
       setMessage("No se pudo contactar la API VOTER.");
     } finally {
@@ -159,7 +221,7 @@ export function VoterBallot() {
   }
 
   async function castBallot() {
-    if (!election || !selectedSlate) return;
+    if (!election || !selectedSlate || election.has_voted || receipt) return;
     setBusy(true);
     setMessage(null);
     try {
@@ -183,7 +245,9 @@ export function VoterBallot() {
         detail?: string;
       };
       if (!issuanceResponse.ok || !issuancePayload.issuance_token) {
-        setMessage(issuancePayload.detail ?? "No se pudo emitir el token de un solo uso.");
+        const mapped = mapLoadError(issuanceResponse.status, issuancePayload.detail);
+        if (mapped.blocker) setBlocker(mapped.blocker);
+        setMessage(mapped.message || (issuancePayload.detail ?? "No se pudo emitir el token de un solo uso."));
         return;
       }
       const zkpProof = election.zkp_verification_enabled
@@ -211,12 +275,15 @@ export function VoterBallot() {
       });
       const payload = (await response.json()) as VoterBallotResponse & { detail?: string };
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo registrar el voto.");
+        const mapped = mapLoadError(response.status, payload.detail);
+        if (mapped.blocker) setBlocker(mapped.blocker);
+        setMessage(mapped.message || (payload.detail ?? "No se pudo registrar el voto."));
         return;
       }
       setReceipt(payload);
       setElection({ ...election, has_voted: true });
-      setMessage("Voto cifrado registrado. Conserva el recibo para la prueba.");
+      setBlocker("already_voted");
+      setSelectedSlate("");
     } catch {
       setMessage("No se pudo preparar o registrar el voto cifrado.");
     } finally {
@@ -224,60 +291,202 @@ export function VoterBallot() {
     }
   }
 
+  if (!sessionChecked) {
+    return (
+      <section className="ballot-shell" aria-busy="true">
+        <p className="ballot-muted">Comprobando la sesión del elector…</p>
+      </section>
+    );
+  }
+
+  if (!voterSessionReady) {
+    return (
+      <section className="ballot-shell" aria-labelledby="voter-ballot-title">
+        <p className="ballot-eyebrow">Emisión VOTER</p>
+        <h2 id="voter-ballot-title" className="ballot-title">
+          Emitir voto cifrado
+        </h2>
+        <p className="ballot-muted">
+          Debe solicitar y verificar un OTP antes de acceder a la papeleta. No se muestra identidad
+          del elector en esta superficie.
+        </p>
+        <Link className="button button-primary inline-button" href="/vote/login">
+          Ir al acceso del elector
+        </Link>
+      </section>
+    );
+  }
+
+  if (receipt && election) {
+    return (
+      <section className="ballot-shell ballot-shell--confirm" aria-labelledby="voter-confirm-title">
+        <p className="ballot-status-pill ballot-status-pill--ok">
+          <span aria-hidden="true">●</span> Elección abierta
+        </p>
+        <h2 id="voter-confirm-title" className="ballot-title">
+          Voto cifrado registrado
+        </h2>
+        <p className="ballot-lead">
+          Su voto fue aceptado correctamente. Esta sesión ya registró su voto para esta elección.
+        </p>
+
+        <VoterBallotReceipt
+          receipt={{
+            electionTitle: election.title,
+            electionId: election.election_id,
+            ballotId: receipt.ballot_id,
+            receiptHash: receipt.receipt_hash,
+            recordedAt: receipt.recorded_at,
+            keyVersion: election.key_version,
+          }}
+        />
+
+        <p className="ballot-help">
+          Conserve este recibo para fines de verificación. El recibo no revela el contenido de su
+          voto.
+        </p>
+        <Link className="ballot-help-link" href="/vote/login">
+          Necesito ayuda
+        </Link>
+      </section>
+    );
+  }
+
+  const activeBlockerMessage = blockerCopy(blocker) ?? message;
+  const emissionDisabled = !canEmit || blocker !== null || Boolean(election?.has_voted);
+
   return (
-    <section className="empty-state" aria-labelledby="voter-ballot-title">
-      <span className="eyebrow">Emisión VOTER</span>
-      <h2 id="voter-ballot-title">Emitir voto cifrado</h2>
-      <p>
-        El payload se cifra en el navegador y no incluye identidad. Se usa un token de emisión de un
-        solo uso y prueba de integridad ballot-integrity-v1 cuando ZKP está habilitado.
-      </p>
-      {!sessionChecked ? (
-        <p className="form-message">Comprobando la sesión del elector…</p>
-      ) : !voterSessionReady ? (
-        <>
-          <p className="form-message">Debes solicitar y verificar un OTP antes de acceder a la boleta.</p>
-          <Link className="button button-primary inline-button" href="/vote/login">
-            Ir al acceso del elector
-          </Link>
-        </>
-      ) : (
-        <>
-          <label htmlFor="voter-election-id">ID de elección</label>
+    <section className="ballot-shell" aria-labelledby="voter-ballot-title">
+      <p className="ballot-eyebrow">Emisión VOTER</p>
+      <h2 id="voter-ballot-title" className="ballot-title">
+        Emitir voto cifrado
+      </h2>
+
+      {!election ? (
+        <div className="ballot-load">
+          <p className="ballot-muted">
+            Indique el identificador de la elección para cargar la papeleta. Su identidad no forma
+            parte de esta pantalla.
+          </p>
+          <label className="ballot-field-label" htmlFor="voter-election-id">
+            ID de elección
+          </label>
           <input
             id="voter-election-id"
+            className="input-field"
             value={electionId}
             onChange={(event) => setElectionId(event.target.value)}
             placeholder="UUID de la elección"
+            autoComplete="off"
             required
           />
-          <button className="button button-secondary" type="button" onClick={() => void loadElection()} disabled={busy || !electionId.trim()}>
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={() => void loadElection()}
+            disabled={busy || !electionId.trim()}
+          >
             {busy ? "Cargando…" : "Cargar elección"}
           </button>
-          {election ? (
+          {activeBlockerMessage ? (
+            <p className="ballot-alert" role="status">
+              {activeBlockerMessage}
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <>
+          <p className="ballot-election-name">{election.title}</p>
+          <div className="ballot-chips" aria-label="Estado de la elección">
+            <span className="ballot-chip ballot-chip--active">Elección activa</span>
+            <span className="ballot-chip ballot-chip--open">Votación abierta</span>
+          </div>
+
+          <ul className="ballot-info-list">
+            <li>
+              Seleccione una plancha. Los candidatos asociados se muestran como información de la
+              plancha seleccionada.
+            </li>
+            <li>Su voto se cifra en el navegador y no se almacena junto con su identidad.</li>
+            <li>Solo puede emitir un voto para esta elección.</li>
+          </ul>
+
+          {blocker || election.has_voted ? (
+            <div className="ballot-blocker" role="status">
+              <p>{activeBlockerMessage ?? "Esta sesión ya registró su voto para esta elección."}</p>
+            </div>
+          ) : (
             <>
-              <h3>{election.title}</h3>
-              {election.has_voted ? (
-                <p className="form-message">Esta sesión ya registró un voto para esta elección.</p>
-              ) : (
-                <>
-                  <label htmlFor="voter-slate">Selecciona una plancha</label>
-                  <select id="voter-slate" value={selectedSlate} onChange={(event) => setSelectedSlate(event.target.value)}>
-                    {election.slates.map((slate) => (
-                      <option value={slate.id} key={slate.id}>{slate.name} · {slate.slogan ?? "Sin lema"}</option>
-                    ))}
-                  </select>
-                  <button className="button button-primary" type="button" onClick={() => void castBallot()} disabled={busy || !selectedSlate}>
-                    {busy ? "Cifrando…" : "Emitir voto"}
-                  </button>
-                </>
-              )}
+              <h3 className="ballot-section-title">Seleccione una plancha</h3>
+              <div className="ballot-slate-grid" role="radiogroup" aria-labelledby={`${slateGroupId}-label`}>
+                <span id={`${slateGroupId}-label`} className="sr-only">
+                  Planchas disponibles
+                </span>
+                {election.slates.map((slate) => {
+                  const selected = selectedSlate === slate.id;
+                  return (
+                    <label
+                      key={slate.id}
+                      className={`ballot-slate-card${selected ? " is-selected" : ""}`}
+                    >
+                      <div className="ballot-slate-card__body">
+                        <p className="ballot-slate-card__name">{slate.name}</p>
+                        <p className="ballot-slate-card__slogan">{slate.slogan ?? "Sin lema"}</p>
+                        <ul className="ballot-slate-card__candidates">
+                          {slate.candidates.length === 0 ? (
+                            <li>Sin candidatos registrados</li>
+                          ) : (
+                            slate.candidates.map((candidate) => (
+                              <li key={candidate.id}>
+                                {candidate.position_title} — {candidate.member_full_name}
+                              </li>
+                            ))
+                          )}
+                        </ul>
+                      </div>
+                      <div className="ballot-slate-card__footer">
+                        <input
+                          type="radio"
+                          name="voter-slate"
+                          value={slate.id}
+                          checked={selected}
+                          onChange={() => setSelectedSlate(slate.id)}
+                        />
+                        <span className="ballot-slate-card__select-label">
+                          {selected ? "Plancha seleccionada" : "Seleccionar"}
+                        </span>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
             </>
+          )}
+
+          <div className="ballot-actions">
+            <button
+              className="button button-primary ballot-emit-btn"
+              type="button"
+              onClick={() => void castBallot()}
+              disabled={emissionDisabled}
+            >
+              {busy ? "Cifrando…" : "Emitir voto"}
+            </button>
+            <p className="ballot-help">
+              La emisión utiliza un token de un solo uso para proteger la operación.
+            </p>
+            <Link className="ballot-help-link" href="/vote/login">
+              Necesito ayuda
+            </Link>
+          </div>
+
+          {message && !blocker && !election.has_voted ? (
+            <p className="ballot-alert" role="status">
+              {message}
+            </p>
           ) : null}
         </>
       )}
-      {receipt ? <p className="form-message">Recibo: {receipt.receipt_hash}</p> : null}
-      {message ? <p className="form-message" role="status">{message}</p> : null}
     </section>
   );
 }

@@ -1006,6 +1006,31 @@ async def _get_draft_election(
     return election
 
 
+async def _get_position_editable_election(
+    session: AsyncSession,
+    election_id: UUID,
+    organization_id: UUID,
+) -> Election:
+    """Positions may be added while DRAFT or REGISTRATION (before FREEZE)."""
+    election = await session.scalar(
+        select(Election).where(
+            Election.id == election_id,
+            Election.organization_id == organization_id,
+        )
+    )
+    if election is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Election not found",
+        )
+    if election.status not in {"DRAFT", "REGISTRATION"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Positions can only be created while the election is DRAFT or REGISTRATION",
+        )
+    return election
+
+
 @router.get("/overview", response_model=AdminOverviewResponse)
 async def admin_overview(
     response: Response,
@@ -1593,9 +1618,9 @@ async def create_admin_position(
     claims: Annotated[AccessClaims, Depends(_require_election_manager)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> AdminPositionResponse:
-    """Create a position only while its tenant-scoped election is DRAFT."""
+    """Create a position while the tenant-scoped election is DRAFT or REGISTRATION."""
     response.headers["Cache-Control"] = "no-store"
-    await _get_draft_election(session, election_id, claims.org_id)
+    await _get_position_editable_election(session, election_id, claims.org_id)
     position = Position(
         election_id=election_id,
         title=payload.title,

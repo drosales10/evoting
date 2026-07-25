@@ -260,7 +260,27 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" | "members" }) {
+export type ElectionsTab =
+  | "ciclo"
+  | "procesos"
+  | "crear"
+  | "planchas"
+  | "estructura"
+  | "elegibles";
+
+type AdminOverviewProps = {
+  focus?: "all" | "elections" | "members";
+  electionsTab?: ElectionsTab;
+  focusElectionId?: string | null;
+  onNavigateTab?: (tab: ElectionsTab, electionId?: string) => void;
+};
+
+export function AdminOverview({
+  focus = "all",
+  electionsTab = "ciclo",
+  focusElectionId = null,
+  onNavigateTab,
+}: AdminOverviewProps) {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [members, setMembers] = useState<AdminMember[]>([]);
   const [elections, setElections] = useState<AdminElection[]>([]);
@@ -328,6 +348,26 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
       setMessage(error instanceof Error ? error.message : "No se pudo cargar el resumen administrativo.");
     });
   }, []);
+
+  useEffect(() => {
+    if (focus !== "elections" || !focusElectionId || elections.length === 0) return;
+    const target = elections.find((item) => item.id === focusElectionId);
+    if (!target) return;
+    if (electionsTab === "estructura" && (target.status === "DRAFT" || target.status === "REGISTRATION")) {
+      void loadPositions(target);
+    }
+    if (
+      (electionsTab === "planchas" || electionsTab === "elegibles") &&
+      (target.status === "REGISTRATION" || target.status === "FREEZE")
+    ) {
+      void loadSlates(target);
+    }
+    if (electionsTab === "elegibles" && (target.status === "REGISTRATION" || target.status === "FREEZE")) {
+      void loadEligibility(target);
+    }
+    // Solo reaccionar a cambios de pestaña / elección enfocada.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus, focusElectionId, electionsTab, elections]);
 
   async function handleImportMembers(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -950,14 +990,50 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
   }
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const isElectionsFocus = focus === "elections";
+  const showCiclo = !isElectionsFocus || electionsTab === "ciclo";
+  const showProcesos = !isElectionsFocus || electionsTab === "procesos";
+  const showElectionList = showCiclo || showProcesos;
+  const showLifecycleActions = !isElectionsFocus || electionsTab === "ciclo";
+  const showPlanchas = !isElectionsFocus || electionsTab === "planchas" || electionsTab === "elegibles";
+  const showEstructura = !isElectionsFocus || electionsTab === "estructura";
+  const showElegiblesDetail = !isElectionsFocus || electionsTab === "elegibles";
+  const showAudit = !isElectionsFocus || electionsTab === "ciclo";
+
+  const structureElections = elections.filter(
+    (e) => e.status === "DRAFT" || e.status === "REGISTRATION",
+  );
+  const canEditPositions =
+    selectedElection?.status === "DRAFT" || selectedElection?.status === "REGISTRATION";
+  const slateReadyElections = elections.filter(
+    (e) => e.status === "REGISTRATION" || e.status === "FREEZE",
+  );
 
   return (
     <>
-      <div className="notice">
-        <strong>{overview.organization_name}</strong>
-        <p>Organización: {overview.organization_slug}</p>
-        <p>Roles activos: {overview.roles.join(", ")}</p>
-      </div>
+      {!isElectionsFocus ? (
+        <div className="notice">
+          <strong>{overview.organization_name}</strong>
+          <p>Organización: {overview.organization_slug}</p>
+          <p>Roles activos: {overview.roles.join(", ")}</p>
+        </div>
+      ) : (
+        <div className="elections-compact-stats" aria-label="Indicadores electorales">
+          <div className="surface-card">
+            <span className="eyebrow">Elecciones</span>
+            <h2>{overview.election_count}</h2>
+          </div>
+          <div className="surface-card">
+            <span className="eyebrow">Urna</span>
+            <h2>{overview.encrypted_ballot_count}</h2>
+          </div>
+          <div className="surface-card">
+            <span className="eyebrow">Elegibles padrón</span>
+            <h2 className="text-emerald-700 dark:text-emerald-300">{overview.eligible_voter_count}</h2>
+          </div>
+        </div>
+      )}
+      {!isElectionsFocus ? (
       <div className="space-y-4" aria-label="Resumen administrativo">
         <div>
           <span className="eyebrow">Padrón · Estatus</span>
@@ -1015,6 +1091,7 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
           <div className="surface-card"><span className="eyebrow">Urna</span><h2>{overview.encrypted_ballot_count}</h2><p>Papeletas cifradas</p></div>
         </div>
       </div>
+      ) : null}
       {focus !== "elections" ? (
       <section className="empty-state" aria-labelledby="member-title">
         <span className="eyebrow">Padrón administrativo</span>
@@ -1098,8 +1175,13 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
         {message ? <p className="form-message" role="status">{message}</p> : null}
       </section>
       ) : null}
-      <section aria-labelledby="election-list-title">
-        <span className="eyebrow">Procesos registrados</span><h2 id="election-list-title">Elecciones</h2>
+      {showElectionList ? (
+      <section aria-labelledby="election-list-title" className="mt-4">
+        <span className="eyebrow">{showLifecycleActions ? "Ciclo electoral" : "Procesos"}</span>
+        <h2 id="election-list-title" className="text-xl font-semibold">
+          {showLifecycleActions ? "Registro → escrutinio" : "Elecciones registradas"}
+        </h2>
+        {message && isElectionsFocus ? <p className="form-message" role="status">{message}</p> : null}
         {elections.length === 0 ? <div className="empty-state"><p>No hay elecciones creadas para esta organización.</p></div> : (
           <div className="election-list">{elections.map((election) => (
             <article className="election-item" key={election.id}>
@@ -1111,7 +1193,7 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
               <div>
                 <time dateTime={election.start_time}>{formatDate(election.start_time)}</time>
                 <div className="hero-actions">
-                  {election.status === "DRAFT" ? (
+                  {showLifecycleActions && election.status === "DRAFT" ? (
                     <button
                       className="button button-primary inline-button"
                       type="button"
@@ -1120,7 +1202,8 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
                     >
                       {lifecycleBusyId === election.id ? "Abriendo…" : "Abrir registro"}
                     </button>
-                  ) : election.status === "REGISTRATION" ? (
+                  ) : null}
+                  {showLifecycleActions && election.status === "REGISTRATION" ? (
                     <button
                       className="button button-primary inline-button"
                       type="button"
@@ -1129,7 +1212,8 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
                     >
                       {lifecycleBusyId === election.id ? "Congelando…" : "Congelar padrón"}
                     </button>
-                  ) : election.status === "FREEZE" ? (
+                  ) : null}
+                  {showLifecycleActions && election.status === "FREEZE" ? (
                     <form className="auth-form" onSubmit={(event) => void handleActivateElection(election, event)}>
                       <label htmlFor={`election-public-key-${election.id}`}>Clave pública de cifrado (urna)</label>
                       <textarea
@@ -1160,7 +1244,8 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
                         {activationBusyId === election.id ? "Activando…" : "Activar votación"}
                       </button>
                     </form>
-                  ) : election.status === "ACTIVE" ? (
+                  ) : null}
+                  {showLifecycleActions && election.status === "ACTIVE" ? (
                     <>
                       <span className="form-message">Votación activa</span>
                       <button
@@ -1180,7 +1265,8 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
                         {lifecycleBusyId === election.id ? "Cerrando…" : "Cerrar piloto (solo dev)"}
                       </button>
                     </>
-                  ) : election.status === "CLOSED" ? (
+                  ) : null}
+                  {showLifecycleActions && election.status === "CLOSED" ? (
                     <form className="auth-form" onSubmit={(event) => void handlePublishTally(election, event)}>
                       <span className="form-message">Votación cerrada; escrutinio firmado pendiente</span>
                       <label htmlFor={`tally-artifact-${election.id}`}>Artefacto JSON firmado</label>
@@ -1204,12 +1290,12 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
                       </button>
                     </form>
                   ) : null}
-                  {(focus === "elections" &&
+                  {showLifecycleActions &&
                     (election.status === "ACTIVE" ||
                       election.status === "CLOSED" ||
                       election.status === "TALLIED" ||
                       election.status === "REGISTRATION" ||
-                      election.status === "FREEZE")) && (
+                      election.status === "FREEZE") && (
                     <a
                       className="button button-secondary inline-button"
                       href="#ceremonia-escrutinio"
@@ -1217,34 +1303,43 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
                       Ir a Ceremonia YouTube
                     </a>
                   )}
-                  {election.status === "REGISTRATION" || election.status === "FREEZE" ? (
+                  {showLifecycleActions && (election.status === "REGISTRATION" || election.status === "FREEZE") ? (
                     <button
                       className="button button-secondary inline-button"
                       type="button"
-                      onClick={() => void loadEligibility(election)}
+                      onClick={() => {
+                        if (onNavigateTab) onNavigateTab("elegibles", election.id);
+                        else void loadEligibility(election);
+                      }}
                     >
                       Ver elegibilidad
                     </button>
                   ) : null}
-                  {election.status === "REGISTRATION" || election.status === "FREEZE" ? (
+                  {showLifecycleActions && (election.status === "REGISTRATION" || election.status === "FREEZE") ? (
                     <button
                       className="button button-secondary inline-button"
                       type="button"
-                      onClick={() => void loadSlates(election)}
+                      onClick={() => {
+                        if (onNavigateTab) onNavigateTab("planchas", election.id);
+                        else void loadSlates(election);
+                      }}
                     >
                       Gestionar planchas
                     </button>
                   ) : null}
-                  {election.status === "DRAFT" ? (
+                  {showLifecycleActions && (election.status === "DRAFT" || election.status === "REGISTRATION") ? (
                     <button
                       className="button button-secondary inline-button"
                       type="button"
-                      onClick={() => void loadPositions(election)}
+                      onClick={() => {
+                        if (onNavigateTab) onNavigateTab("estructura", election.id);
+                        else void loadPositions(election);
+                      }}
                     >
                       Configurar posiciones
                     </button>
                   ) : null}
-                  {election.status === "CLOSED" || election.status === "TALLIED" ? (
+                  {showLifecycleActions && (election.status === "CLOSED" || election.status === "TALLIED") ? (
                     <button
                       className="button button-secondary inline-button"
                       type="button"
@@ -1253,13 +1348,52 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
                       Ver auditoría
                     </button>
                   ) : null}
+                  {!showLifecycleActions ? (
+                    <>
+                      <button
+                        className="button button-secondary inline-button"
+                        type="button"
+                        onClick={() => onNavigateTab?.("ciclo", election.id)}
+                      >
+                        Abrir ciclo
+                      </button>
+                      {election.status === "DRAFT" || election.status === "REGISTRATION" ? (
+                        <button
+                          className="button button-secondary inline-button"
+                          type="button"
+                          onClick={() => onNavigateTab?.("estructura", election.id)}
+                        >
+                          Estructura
+                        </button>
+                      ) : null}
+                      {election.status === "REGISTRATION" || election.status === "FREEZE" ? (
+                        <>
+                          <button
+                            className="button button-secondary inline-button"
+                            type="button"
+                            onClick={() => onNavigateTab?.("planchas", election.id)}
+                          >
+                            Planchas
+                          </button>
+                          <button
+                            className="button button-secondary inline-button"
+                            type="button"
+                            onClick={() => onNavigateTab?.("elegibles", election.id)}
+                          >
+                            Asignar elegibles
+                          </button>
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
                 </div>
               </div>
             </article>
           ))}</div>
         )}
       </section>
-      {auditElection ? (
+      ) : null}
+      {showAudit && auditElection ? (
         <section className="empty-state" aria-labelledby="audit-title">
           <span className="eyebrow">Auditoría electoral</span>
           <h2 id="audit-title">Eventos: {auditElection.title}</h2>
@@ -1289,7 +1423,91 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
           )}
         </section>
       ) : null}
-      {eligibilityElection ? (
+      {isElectionsFocus && (electionsTab === "estructura") ? (
+        <section className="empty-state mt-4" aria-labelledby="estructura-picker-title">
+          <span className="eyebrow">Estructura de elección</span>
+          <h2 id="estructura-picker-title">Cargos y posiciones</h2>
+          <p>
+            Puedes definir o completar cargos en <strong>DRAFT</strong> o{" "}
+            <strong>REGISTRATION</strong>. Tras congelar el padrón (FREEZE) la estructura queda
+            bloqueada.
+          </p>
+          <label className="mt-3 block max-w-xl text-sm font-bold" htmlFor="estructura-election">
+            Elección
+            <select
+              id="estructura-election"
+              className="input-field mt-1"
+              value={selectedElection?.id ?? ""}
+              onChange={(event) => {
+                const next = elections.find((item) => item.id === event.target.value);
+                if (next) void loadPositions(next);
+                else {
+                  setSelectedElection(null);
+                  setPositions([]);
+                }
+              }}
+            >
+              <option value="">Seleccionar elección (DRAFT o REGISTRATION)</option>
+              {structureElections.map((election) => (
+                <option key={election.id} value={election.id}>
+                  {election.title} · {election.status}
+                </option>
+              ))}
+            </select>
+          </label>
+          {structureElections.length === 0 ? (
+            <p className="form-message">
+              No hay elecciones editables. Crea una en DRAFT o usa una que aún no esté congelada.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+      {isElectionsFocus && (electionsTab === "planchas" || electionsTab === "elegibles") ? (
+        <section className="empty-state mt-4" aria-labelledby="plancha-picker-title">
+          <span className="eyebrow">{electionsTab === "elegibles" ? "Asignar elegibles" : "Gestionar planchas"}</span>
+          <h2 id="plancha-picker-title">
+            {electionsTab === "elegibles" ? "Candidatos por cargo" : "Planchas de la elección"}
+          </h2>
+          <p>
+            {electionsTab === "elegibles"
+              ? "Asigna miembros elegibles a los cargos de cada plancha. La selección del voto sigue siendo por plancha (slate_id)."
+              : "Las planchas se crean en REGISTRATION. En FREEZE solo se revisan."}
+          </p>
+          <label className="mt-3 block max-w-xl text-sm font-bold" htmlFor="slate-election-picker">
+            Elección
+            <select
+              id="slate-election-picker"
+              className="input-field mt-1"
+              value={slateElection?.id ?? ""}
+              onChange={(event) => {
+                const next = elections.find((item) => item.id === event.target.value);
+                if (next) {
+                  void loadSlates(next);
+                  if (electionsTab === "elegibles") void loadEligibility(next);
+                } else {
+                  setSlateElection(null);
+                  setSlates([]);
+                  setSelectedSlate(null);
+                  setCandidates([]);
+                }
+              }}
+            >
+              <option value="">Seleccionar elección en registro o congelada</option>
+              {slateReadyElections.map((election) => (
+                <option key={election.id} value={election.id}>
+                  {election.title} · {election.status}
+                </option>
+              ))}
+            </select>
+          </label>
+          {slateReadyElections.length === 0 ? (
+            <p className="form-message">
+              No hay elecciones en REGISTRATION o FREEZE. Abre el registro desde Ciclo electoral.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+      {showElegiblesDetail && eligibilityElection ? (
         <section className="empty-state" aria-labelledby="eligibility-title">
           <span className="eyebrow">Snapshot de elegibilidad</span>
           <h2 id="eligibility-title">Elegibilidad: {eligibilityElection.title}</h2>
@@ -1337,7 +1555,7 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
           )}
         </section>
       ) : null}
-      {slateElection ? (
+      {showPlanchas && slateElection ? (
         <section className="empty-state" aria-labelledby="slate-title">
           <span className="eyebrow">Registro de planchas</span>
           <h2 id="slate-title">Planchas: {slateElection.title}</h2>
@@ -1358,13 +1576,13 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
                     type="button"
                     onClick={() => void loadCandidates(slate)}
                   >
-                    Ver candidatos
+                    {electionsTab === "elegibles" ? "Asignar / ver candidatos" : "Ver candidatos"}
                   </button>
                 </article>
               ))}
             </div>
           )}
-          {slateElection.status === "REGISTRATION" ? (
+          {electionsTab !== "elegibles" && slateElection.status === "REGISTRATION" ? (
             <form className="auth-form" onSubmit={handleCreateSlate}>
               <label htmlFor="slate-name-input">Nombre de plancha</label>
               <input id="slate-name-input" name="slate_name" minLength={2} maxLength={150} required />
@@ -1384,7 +1602,7 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
               </button>
             </form>
           ) : null}
-          {selectedSlate ? (
+          {selectedSlate && (electionsTab === "elegibles" || !isElectionsFocus || electionsTab === "planchas") ? (
             <div className="empty-state" aria-labelledby="candidate-title">
               <h3 id="candidate-title">Candidatos: {selectedSlate.name}</h3>
               {candidates.length === 0 ? <p>No hay candidatos registrados.</p> : (
@@ -1400,9 +1618,9 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
                   ))}
                 </div>
               )}
-              {slateElection.status === "REGISTRATION" ? (
+              {(electionsTab === "elegibles" || !isElectionsFocus) && slateElection.status === "REGISTRATION" ? (
                 <form className="auth-form" onSubmit={handleCreateCandidate}>
-                  <label htmlFor="candidate-position-input">Posición</label>
+                  <label htmlFor="candidate-position-input">Posición / cargo</label>
                   <select id="candidate-position-input" name="candidate_position_id" required>
                     <option value="">Selecciona una posición</option>
                     {positions.map((position) => (
@@ -1423,7 +1641,7 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
                   <label htmlFor="candidate-bio-input">Biografía</label>
                   <textarea id="candidate-bio-input" name="candidate_bio" maxLength={5000} rows={4} />
                   <button className="button button-primary" type="submit" disabled={candidateBusy || positions.length === 0}>
-                    {candidateBusy ? "Registrando…" : "Registrar candidato"}
+                    {candidateBusy ? "Registrando…" : "Asignar elegible al cargo"}
                   </button>
                 </form>
               ) : null}
@@ -1432,20 +1650,29 @@ export function AdminOverview({ focus = "all" }: { focus?: "all" | "elections" |
           {slateMessage ? <p className="form-message" role="status">{slateMessage}</p> : null}
         </section>
       ) : null}
-      {selectedElection ? (
+      {showEstructura && selectedElection ? (
         <section className="empty-state" aria-labelledby="position-title">
-          <span className="eyebrow">Estructura de elección DRAFT</span><h2 id="position-title">Posiciones: {selectedElection.title}</h2>
-          <p>Las posiciones definen los cargos antes de registrar planchas y candidatos.</p>
+          <span className="eyebrow">Estructura de elección</span>
+          <h2 id="position-title">Posiciones: {selectedElection.title}</h2>
+          <p>
+            Las posiciones definen los cargos de la papeleta. Estado actual:{" "}
+            <strong>{selectedElection.status}</strong>
+            {!canEditPositions
+              ? ". Esta elección ya está congelada o activa; no se pueden agregar cargos."
+              : ". Puedes agregar cargos hasta antes de congelar el padrón."}
+          </p>
           <div className="election-list">{positions.length === 0 ? <p>No hay posiciones configuradas.</p> : positions.map((position) => (
             <article className="election-item" key={position.id}><div><h3>{position.title}</h3><p>{position.code} · {position.is_required ? "Obligatoria" : "Opcional"}</p></div><time>Orden {position.display_order}</time></article>
           ))}</div>
-          <form className="auth-form" onSubmit={handleCreatePosition}>
-            <label htmlFor="position-title-input">Título de posición</label><input id="position-title-input" name="position_title" minLength={2} maxLength={100} required />
-            <label htmlFor="position-code-input">Código</label><input id="position-code-input" name="position_code" pattern="[A-Za-z][A-Za-z0-9_-]{1,49}" placeholder="PRESIDENTE" maxLength={50} required />
-            <label htmlFor="position-order-input">Orden</label><input id="position-order-input" name="position_order" type="number" min="0" max="10000" defaultValue="0" required />
-            <label><input name="position_required" type="checkbox" defaultChecked /> Posición obligatoria</label>
-            <button className="button button-primary" type="submit" disabled={positionBusy}>{positionBusy ? "Creando…" : "Agregar posición"}</button>
-          </form>
+          {canEditPositions ? (
+            <form className="auth-form" onSubmit={handleCreatePosition}>
+              <label htmlFor="position-title-input">Título de posición</label><input id="position-title-input" name="position_title" minLength={2} maxLength={100} required />
+              <label htmlFor="position-code-input">Código</label><input id="position-code-input" name="position_code" pattern="[A-Za-z][A-Za-z0-9_-]{1,49}" placeholder="PRESIDENTE" maxLength={50} required />
+              <label htmlFor="position-order-input">Orden</label><input id="position-order-input" name="position_order" type="number" min="0" max="10000" defaultValue="0" required />
+              <label><input name="position_required" type="checkbox" defaultChecked /> Posición obligatoria</label>
+              <button className="button button-primary" type="submit" disabled={positionBusy}>{positionBusy ? "Creando…" : "Agregar posición"}</button>
+            </form>
+          ) : null}
           {positionMessage ? <p className="form-message" role="status">{positionMessage}</p> : null}
         </section>
       ) : null}
