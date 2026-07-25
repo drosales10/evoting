@@ -250,6 +250,7 @@ class EncryptedBallot(CreatedAtMixin, Base):
     __table_args__ = (
         UniqueConstraint("election_id", "receipt_hash", name="uq_encrypted_ballots_receipt"),
         Index("ix_encrypted_ballots_organization_election", "organization_id", "election_id"),
+        Index("ix_encrypted_ballots_receipt_hash", "receipt_hash"),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -267,6 +268,7 @@ class EncryptedBallot(CreatedAtMixin, Base):
     receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     zkp_proof: Mapped[str | None] = mapped_column(Text, nullable=True)
     key_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    qr_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AuditLog(CreatedAtMixin, Base):

@@ -324,6 +324,15 @@
   .ballot-fiscal-ticket__fine.center {
     @apply mt-3;
   }
+  .ballot-fiscal-ticket__qr {
+    @apply mt-4 flex flex-col items-center justify-center gap-2 text-center;
+  }
+  .ballot-fiscal-ticket__qr img {
+    @apply h-[168px] w-[168px] rounded-sm bg-white;
+  }
+  .ballot-fiscal-ticket__qr-caption {
+    @apply text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)];
+  }
   .ballot-receipt-actions {
     @apply mt-4 flex flex-col items-center justify-center gap-2;
   }

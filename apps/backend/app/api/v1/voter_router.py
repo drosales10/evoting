@@ -107,6 +107,7 @@ class VoterBallotResponse(BaseModel):
     receipt_hash: str
     ballot_id: UUID
     recorded_at: datetime
+    qr_payload: str
 
 
 def _hash_issuance_token(token: str) -> str:
@@ -425,13 +426,16 @@ async def cast_voter_ballot(
         issuance.consumed_at = now
 
     recorded_at = datetime.now(UTC)
+    receipt_hash = payload.receipt_hash.lower()
+    qr_payload = f"{settings.app_public_url.rstrip('/')}/recibo/{receipt_hash}"
     ballot = EncryptedBallot(
         organization_id=claims.org_id,
         election_id=election.id,
         encrypted_payload=payload.encrypted_payload,
-        receipt_hash=payload.receipt_hash.lower(),
+        receipt_hash=receipt_hash,
         zkp_proof=payload.zkp_proof,
         key_version=payload.key_version,
+        qr_payload=qr_payload,
     )
     session.add(ballot)
     eligibility.has_voted = True
@@ -460,4 +464,5 @@ async def cast_voter_ballot(
         receipt_hash=ballot.receipt_hash,
         ballot_id=ballot.id,
         recorded_at=recorded_at,
+        qr_payload=ballot.qr_payload or qr_payload,
     )

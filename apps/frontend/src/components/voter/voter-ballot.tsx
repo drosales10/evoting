@@ -39,6 +39,7 @@ type VoterBallotResponse = {
   receipt_hash: string;
   ballot_id: string;
   recorded_at: string;
+  qr_payload?: string;
 };
 
 type BallotBlocker =
@@ -338,6 +339,7 @@ export function VoterBallot() {
             receiptHash: receipt.receipt_hash,
             recordedAt: receipt.recorded_at,
             keyVersion: election.key_version,
+            qrPayload: receipt.qr_payload,
           }}
         />
 

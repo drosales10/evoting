@@ -4,16 +4,18 @@ from uuid import UUID
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.session import get_db_session, get_session_factory
-from app.models import Election, ElectionBroadcast, ElectionTally
+from app.models import Election, ElectionBroadcast, ElectionTally, EncryptedBallot
 from app.repositories.elections import PublicElectionRepository
+from app.services.rate_limit import client_key, rate_limiter
 from app.services.tally_artifact import artifact_sha256, verify_artifact
 from app.services.youtube import youtube_embed_url
 
@@ -122,6 +124,22 @@ class PublicVerifyResponse(BaseModel):
     signature: str
     artifact: dict[str, Any]
     download_path: str
+
+
+class PublicReceiptResponse(BaseModel):
+    """Existence proof for a cast ballot — never includes vote content or voter identity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    exists: bool
+    receipt_hash: str
+    ballot_id: UUID
+    election_id: UUID
+    election_title: str
+    election_status: str
+    recorded_at: datetime
+    qr_payload: str
+    status: Literal["ACEPTADO"] = "ACEPTADO"
 
 
 def _signing_or_public_pem(election: Election) -> str:
@@ -243,6 +261,53 @@ async def verify_public_artifact(
             artifact=tally.artifact,
             download_path=f"/api/v1/public/verify/{tally.artifact_sha256}/artifact",
         )
+
+
+@router.get("/receipts/{receipt_hash}", response_model=PublicReceiptResponse)
+async def get_public_receipt(
+    receipt_hash: str,
+    request: Request,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> PublicReceiptResponse:
+    """Confirm that an encrypted ballot exists without revealing vote content or voter identity."""
+    response.headers["Cache-Control"] = "no-store"
+    rate_limiter.hit(
+        client_key(request, "public-receipt"),
+        limit=settings.rate_limit_public_receipt_per_minute,
+        window_seconds=60,
+    )
+    normalized = receipt_hash.strip().lower()
+    if len(normalized) != 64 or any(c not in "0123456789abcdef" for c in normalized):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid receipt hash",
+        )
+
+    row = await session.execute(
+        select(EncryptedBallot, Election)
+        .join(Election, Election.id == EncryptedBallot.election_id)
+        .where(EncryptedBallot.receipt_hash == normalized)
+        .limit(1)
+    )
+    match = row.first()
+    if match is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found")
+
+    ballot, election = match
+    qr_payload = ballot.qr_payload or (
+        f"{settings.app_public_url.rstrip('/')}/recibo/{ballot.receipt_hash}"
+    )
+    return PublicReceiptResponse(
+        exists=True,
+        receipt_hash=ballot.receipt_hash,
+        ballot_id=ballot.id,
+        election_id=election.id,
+        election_title=election.title,
+        election_status=election.status,
+        recorded_at=ballot.created_at,
+        qr_payload=qr_payload,
+    )
 
 
 @router.get("/verify/{artifact_hash}/artifact")

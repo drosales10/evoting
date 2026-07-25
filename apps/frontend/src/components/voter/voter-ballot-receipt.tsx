@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { APP_TIMEZONE, formatAppDate, formatAppTime } from "@/lib/datetime";
 
@@ -11,6 +11,7 @@ export type BallotReceiptData = {
   receiptHash: string;
   recordedAt: string;
   keyVersion?: string;
+  qrPayload?: string | null;
 };
 
 function shortRef(value: string, size = 8): string {
@@ -24,11 +25,48 @@ type VoterBallotReceiptProps = {
 export function VoterBallotReceipt({ receipt }: VoterBallotReceiptProps) {
   const ticketRef = useRef<HTMLElement>(null);
   const [printMessage, setPrintMessage] = useState<string | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const fecha = formatAppDate(receipt.recordedAt);
   const hora = formatAppTime(receipt.recordedAt);
   const electionRef = shortRef(receipt.electionId);
   const ballotRef = shortRef(receipt.ballotId, 12);
   const verificationId = receipt.receiptHash.toLowerCase();
+  const [qrPayload, setQrPayload] = useState(receipt.qrPayload?.trim() || "");
+
+  useEffect(() => {
+    const fromApi = receipt.qrPayload?.trim();
+    if (fromApi) {
+      setQrPayload(fromApi);
+      return;
+    }
+    setQrPayload(`${window.location.origin}/recibo/${verificationId}`);
+  }, [receipt.qrPayload, verificationId]);
+
+  useEffect(() => {
+    if (!qrPayload) {
+      setQrDataUrl(null);
+      return;
+    }
+    let cancelled = false;
+    void import("qrcode")
+      .then((QRCode) =>
+        QRCode.toDataURL(qrPayload, {
+          width: 168,
+          margin: 1,
+          errorCorrectionLevel: "M",
+          color: { dark: "#0f172a", light: "#ffffff" },
+        }),
+      )
+      .then((url) => {
+        if (!cancelled) setQrDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setQrDataUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [qrPayload]);
 
   const handlePrint = useCallback(() => {
     setPrintMessage(null);
@@ -124,6 +162,26 @@ export function VoterBallotReceipt({ receipt }: VoterBallotReceiptProps) {
           Conserve este recibo para fines de verificación. El recibo no revela el contenido de su
           voto.
         </p>
+
+        {qrPayload ? (
+          <div className="ballot-fiscal-ticket__qr">
+            {qrDataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={qrDataUrl}
+                alt="Código QR de verificación de existencia del recibo"
+                width={168}
+                height={168}
+              />
+            ) : (
+              <p className="ballot-fiscal-ticket__fine">Generando código QR…</p>
+            )}
+            <p className="ballot-fiscal-ticket__qr-caption">
+              Escanee para verificar existencia
+            </p>
+          </div>
+        ) : null}
+
         <p className="ballot-fiscal-ticket__fine center">*** Fin del comprobante ***</p>
       </article>
 

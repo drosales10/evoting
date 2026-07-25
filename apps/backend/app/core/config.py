@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     rate_limit_otp_per_minute: int = 5
     rate_limit_login_per_minute: int = 10
     rate_limit_ballot_per_minute: int = 20
+    rate_limit_public_receipt_per_minute: int = 60
     mailtrap_api_token: str | None = None
     mailtrap_api_mode: str = "sending"
     app_public_url: str = "http://localhost:3000"
