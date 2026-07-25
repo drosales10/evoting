@@ -48,8 +48,6 @@ export default async function ClienteResultadoDetallePage({ params }: PageProps)
         </p>
       </div>
 
-      <CeremonyPublicSection electionId={electionId} />
-
       <ResultsDashboard
         result={result}
         mapMode="public"
@@ -57,6 +55,7 @@ export default async function ClienteResultadoDetallePage({ params }: PageProps)
         backHref="/cliente/resultados"
         verifyHref={`/verify/${result.artifact_sha256}`}
         mapboxToken={mapboxToken}
+        afterVerification={<CeremonyPublicSection electionId={electionId} />}
       />
     </div>
   );

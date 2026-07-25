@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 import type { PublicElectionResult } from "@evoting/shared";
 
 import { ResultsParticipationMap } from "@/components/results/ResultsParticipationMap";
@@ -17,6 +18,7 @@ export function ResultsDashboard({
   verifyHref,
   mapboxToken,
   showVerification = true,
+  afterVerification,
 }: {
   result: PublicElectionResult;
   mapMode?: "public" | "admin";
@@ -25,6 +27,7 @@ export function ResultsDashboard({
   verifyHref?: string;
   mapboxToken?: string;
   showVerification?: boolean;
+  afterVerification?: ReactNode;
 }) {
   const summary = summarizeElectionResult(result);
   const base = apiUrl();
@@ -178,6 +181,8 @@ export function ResultsDashboard({
           </details>
         </section>
       ) : null}
+
+      {afterVerification}
 
       <div className="flex flex-wrap gap-2">
         {backHref ? (

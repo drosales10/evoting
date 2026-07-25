@@ -330,6 +330,11 @@ export function AdminOverview({
   const [lifecycleBusyId, setLifecycleBusyId] = useState<string | null>(null);
   const [activationBusyId, setActivationBusyId] = useState<string | null>(null);
   const [tallyBusyId, setTallyBusyId] = useState<string | null>(null);
+  const [tallyFeedback, setTallyFeedback] = useState<{
+    electionId: string;
+    kind: "ok" | "error";
+    text: string;
+  } | null>(null);
   const [auditElection, setAuditElection] = useState<AdminElection | null>(null);
   const [auditEvents, setAuditEvents] = useState<AdminElectionAudit[]>([]);
   const [auditBusy, setAuditBusy] = useState(false);
@@ -709,16 +714,34 @@ export function AdminOverview({
     event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault();
-    setTallyBusyId(election.id);
-    setMessage("");
     const formElement = event.currentTarget;
+    if (!formElement) {
+      setTallyFeedback({
+        electionId: election.id,
+        kind: "error",
+        text: "No se pudo leer el formulario del tally. Recarga la página e inténtalo de nuevo.",
+      });
+      return;
+    }
     const form = new FormData(formElement);
     const rawArtifact = String(form.get("tally_artifact") ?? "").trim();
     const pilotOverride = form.get("tally_pilot_override") === "on";
+    setTallyBusyId(election.id);
+    setMessage("");
+    setTallyFeedback(null);
+
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     const csrfToken = window.sessionStorage.getItem("evoting_admin_csrf");
     if (!csrfToken) {
-      setMessage("Sesión ADMIN sin CSRF. Inicia sesión nuevamente.");
+      const text = "Sesión ADMIN sin CSRF. Inicia sesión nuevamente.";
+      setMessage(text);
+      setTallyFeedback({ electionId: election.id, kind: "error", text });
+      setTallyBusyId(null);
+      return;
+    }
+    if (!rawArtifact) {
+      const text = "Pega el JSON completo del script (debe incluir artifact y signature).";
+      setTallyFeedback({ electionId: election.id, kind: "error", text });
       setTallyBusyId(null);
       return;
     }
@@ -737,19 +760,36 @@ export function AdminOverview({
             `${readiness.key_compare_warning ?? "Falta el hito de comparación de claves en el live."}\n\n¿Publicar de todos modos?`,
           );
           if (!confirmed) {
+            setTallyFeedback({
+              electionId: election.id,
+              kind: "error",
+              text: "Publicación cancelada: falta confirmar la advertencia de comparación de claves.",
+            });
             setTallyBusyId(null);
             return;
           }
         }
       }
-      const parsed = JSON.parse(rawArtifact) as {
+      let parsed: {
         artifact?: Record<string, unknown>;
         signature?: string;
       };
+      try {
+        parsed = JSON.parse(rawArtifact) as {
+          artifact?: Record<string, unknown>;
+          signature?: string;
+        };
+      } catch {
+        throw new Error(
+          "El texto pegado no es JSON válido. Usa la salida completa de tally_encrypted_ballots.py (objeto con artifact + signature).",
+        );
+      }
       const artifact = parsed.artifact ?? parsed;
       const signature = parsed.signature;
-      if (!signature) {
-        throw new Error("El JSON del tally no contiene signature.");
+      if (!signature || typeof signature !== "string") {
+        throw new Error(
+          "El JSON no contiene signature. Debe ser { \"artifact\": {...}, \"signature\": \"...\" }.",
+        );
       }
       const payload = await requestApiJson<AdminTallyPublishResponse>(
         `${apiUrl}/api/v1/admin/elections/${election.id}/tally`,
@@ -778,16 +818,20 @@ export function AdminOverview({
         setSelectedElection({ ...selectedElection, status: payload.election_status });
       }
       formElement.reset();
-      setMessage(
+      const okText =
         payload.approval_stage === "propose"
           ? `Tally propuesto (doble aprobación pendiente). Huella ${payload.artifact_sha256.slice(0, 16)}…`
           : `Tally verificado y publicado: ${payload.ballot_count} boletas. ` +
             `Resultado ${payload.pilot_override ? "de piloto" : "oficial"}; ` +
             `huella del artefacto ${payload.artifact_sha256.slice(0, 16)}…` +
-            (payload.acta_sha256 ? ` Acta ${payload.acta_sha256.slice(0, 16)}…` : ""),
-      );
+            (payload.acta_sha256 ? ` Acta ${payload.acta_sha256.slice(0, 16)}…` : "");
+      setMessage(okText);
+      setTallyFeedback({ electionId: election.id, kind: "ok", text: okText });
     } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "No se pudo publicar el tally.");
+      const text =
+        error instanceof Error ? error.message : "No se pudo publicar el tally.";
+      setMessage(text);
+      setTallyFeedback({ electionId: election.id, kind: "error", text });
     } finally {
       setTallyBusyId(null);
     }
@@ -1395,7 +1439,7 @@ export function AdminOverview({
                         id={`tally-artifact-${election.id}`}
                         name="tally_artifact"
                         rows={5}
-                        placeholder="Pega aquí la salida JSON de tally_encrypted_ballots.py"
+                        placeholder='Pega el JSON completo: { "artifact": {...}, "signature": "..." }'
                         required
                       />
                       <label>
@@ -1409,6 +1453,18 @@ export function AdminOverview({
                       >
                         {tallyBusyId === election.id ? "Verificando…" : "Verificar y publicar tally"}
                       </button>
+                      {tallyFeedback?.electionId === election.id ? (
+                        <p
+                          className={
+                            tallyFeedback.kind === "error"
+                              ? "form-message mt-2 text-amber-800 dark:text-amber-200"
+                              : "form-message mt-2 text-emerald-800 dark:text-emerald-200"
+                          }
+                          role={tallyFeedback.kind === "error" ? "alert" : "status"}
+                        >
+                          {tallyFeedback.text}
+                        </p>
+                      ) : null}
                     </form>
                   ) : null}
                   {showLifecycleActions &&
