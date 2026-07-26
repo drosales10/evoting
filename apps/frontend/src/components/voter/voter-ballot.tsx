@@ -13,6 +13,7 @@ type VoterCandidate = {
   position_code: string;
   position_title: string;
   member_full_name: string;
+  bio?: string | null;
   has_photo?: boolean;
   photo_url?: string | null;
 };
@@ -64,9 +65,9 @@ type BallotBlocker =
 
 const CANDIDATE_PLACEHOLDER = "/images/candidate-placeholder.svg";
 
-function candidatePhotoSrc(apiUrl: string, candidate: VoterCandidate): string {
+function resolveCandidatePhotoUrl(apiUrl: string, candidate: VoterCandidate): string | null {
   const url = candidate.photo_url?.trim();
-  if (!url) return CANDIDATE_PLACEHOLDER;
+  if (!url) return null;
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
   return `${apiUrl}${url.startsWith("/") ? url : `/${url}`}`;
 }
@@ -78,18 +79,98 @@ function CandidatePhoto({
   apiUrl: string;
   candidate: VoterCandidate;
 }) {
-  const [src, setSrc] = useState(() => candidatePhotoSrc(apiUrl, candidate));
+  const [src, setSrc] = useState(CANDIDATE_PLACEHOLDER);
+  const [open, setOpen] = useState(false);
+  const bio = candidate.bio?.trim() || "Sin descripción registrada.";
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    const target = resolveCandidatePhotoUrl(apiUrl, candidate);
+    if (!target) {
+      setSrc(CANDIDATE_PLACEHOLDER);
+      return;
+    }
+
+    // Fotos del API VOTER requieren cookie: cargar como blob con credentials.
+    if (target.includes("/api/v1/voter/")) {
+      void voterFetch(target, { cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const blob = await response.blob();
+          if (cancelled) return;
+          objectUrl = URL.createObjectURL(blob);
+          setSrc(objectUrl);
+        })
+        .catch(() => {
+          if (!cancelled) setSrc(CANDIDATE_PLACEHOLDER);
+        });
+    } else {
+      setSrc(target);
+    }
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [apiUrl, candidate.id, candidate.photo_url]);
+
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- blob/API cookie auth; static placeholder fallback
-    <img
-      className="ballot-candidate-photo"
-      src={src}
-      alt=""
-      width={48}
-      height={60}
-      loading="lazy"
-      onError={() => setSrc(CANDIDATE_PLACEHOLDER)}
-    />
+    <div
+      className="ballot-candidate-photo-wrap"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setOpen(false);
+        }
+      }}
+    >
+      <div
+        className="ballot-candidate-photo-btn"
+        role="button"
+        tabIndex={0}
+        aria-label={`Ver descripción de ${candidate.member_full_name}`}
+        aria-expanded={open}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((current) => !current);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen((current) => !current);
+          }
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- blob/API cookie auth; static placeholder fallback */}
+        <img
+          className="ballot-candidate-photo"
+          src={src}
+          alt=""
+          width={48}
+          height={60}
+          loading="lazy"
+          onError={() => setSrc(CANDIDATE_PLACEHOLDER)}
+        />
+      </div>
+      {open ? (
+        <div className="ballot-candidate-modal" role="dialog" aria-label={candidate.member_full_name}>
+          <div className="ballot-candidate-modal__media">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} alt="" width={96} height={120} onError={() => setSrc(CANDIDATE_PLACEHOLDER)} />
+          </div>
+          <div className="ballot-candidate-modal__body">
+            <p className="ballot-candidate-modal__role">{candidate.position_title}</p>
+            <p className="ballot-candidate-modal__name">{candidate.member_full_name}</p>
+            <p className="ballot-candidate-modal__bio">{bio}</p>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

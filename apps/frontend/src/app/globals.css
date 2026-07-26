@@ -243,10 +243,34 @@
     @apply mt-3 list-none space-y-2 p-0 text-xs leading-snug text-[var(--muted)];
   }
   .ballot-candidate-row {
-    @apply flex items-center gap-2.5;
+    @apply relative flex items-center gap-2.5;
+  }
+  .ballot-candidate-photo-wrap {
+    @apply relative shrink-0;
+  }
+  .ballot-candidate-photo-btn {
+    @apply block rounded-md p-0 border-0 bg-transparent cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-sky-600;
   }
   .ballot-candidate-photo {
     @apply h-[3.25rem] w-10 shrink-0 rounded-md border border-[var(--line)] object-cover bg-slate-100 dark:bg-slate-800;
+  }
+  .ballot-candidate-modal {
+    @apply absolute left-0 top-[calc(100%+0.35rem)] z-40 flex w-[min(18rem,calc(100vw-2rem))] gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3 text-left shadow-lg dark:shadow-black/50;
+  }
+  .ballot-candidate-modal__media img {
+    @apply h-[7.5rem] w-24 rounded-md border border-[var(--line)] object-cover bg-slate-100 dark:bg-slate-800;
+  }
+  .ballot-candidate-modal__body {
+    @apply min-w-0 flex flex-col gap-1;
+  }
+  .ballot-candidate-modal__role {
+    @apply text-[0.65rem] font-semibold uppercase tracking-wide text-sky-800 dark:text-sky-300;
+  }
+  .ballot-candidate-modal__name {
+    @apply text-sm font-semibold text-[var(--ink)];
+  }
+  .ballot-candidate-modal__bio {
+    @apply max-h-28 overflow-y-auto text-xs leading-snug text-[var(--muted)] whitespace-pre-wrap;
   }
   .ballot-candidate-meta {
     @apply min-w-0 flex flex-col gap-0.5;

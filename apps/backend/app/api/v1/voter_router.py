@@ -56,6 +56,7 @@ class VoterCandidateResponse(BaseModel):
     position_code: str
     position_title: str
     member_full_name: str
+    bio: str | None = None
     has_photo: bool = False
     photo_url: str | None = None
 
@@ -298,15 +299,17 @@ async def get_voter_election(
     for candidate, position, member in candidate_rows:
         external_photo = (candidate.photo_url or "").strip() or None
         member_has_photo = bool(member.photo_sha256 or member.photo_content_type)
-        if external_photo and (
-            external_photo.startswith("https://") or external_photo.startswith("http://")
-        ):
-            photo_url: str | None = external_photo
-            has_photo = True
-        elif member_has_photo:
+        # Preferir el endpoint autenticado del miembro cuando hay foto en DB.
+        # Las URLs externas rotas eran la causa habitual de <img> roto en la boleta.
+        if member_has_photo:
             photo_url = (
                 f"/api/v1/voter/elections/{election.id}/candidates/{candidate.id}/photo"
             )
+            has_photo = True
+        elif external_photo and (
+            external_photo.startswith("https://") or external_photo.startswith("http://")
+        ):
+            photo_url = external_photo
             has_photo = True
         else:
             photo_url = None
@@ -318,6 +321,7 @@ async def get_voter_election(
                 position_code=position.code,
                 position_title=position.title,
                 member_full_name=member.full_name,
+                bio=(candidate.bio or "").strip() or None,
                 has_photo=has_photo,
                 photo_url=photo_url,
             )
