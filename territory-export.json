@@ -1,0 +1,458 @@
+{
+  "organization_slug": "sociedad-forestales-afines",
+  "regions": [
+    {
+      "code": "1",
+      "name": "Los Andes",
+      "states": [
+        {
+          "code": "10",
+          "name": "Mérida",
+          "municipalities": [
+            {
+              "code": "14",
+              "name": "Libertador-Mérida",
+              "polling_places": [
+                {
+                  "code": "10",
+                  "name": "Mesa 10"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "11",
+          "name": "Táchira",
+          "municipalities": [
+            {
+              "code": "15",
+              "name": "San Cristóbal",
+              "polling_places": [
+                {
+                  "code": "15",
+                  "name": "Mesa 15"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "12",
+          "name": "Trujillo",
+          "municipalities": [
+            {
+              "code": "16",
+              "name": "Trujillo",
+              "polling_places": [
+                {
+                  "code": "21",
+                  "name": "Mesa 21"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "10",
+      "name": "Esequibo",
+      "states": [
+        {
+          "code": "8",
+          "name": "Zona Reclamación",
+          "municipalities": []
+        }
+      ]
+    },
+    {
+      "code": "2",
+      "name": "Cordillera Central",
+      "states": [
+        {
+          "code": "1",
+          "name": "Aragua",
+          "municipalities": [
+            {
+              "code": "6",
+              "name": "Guaicaipuro",
+              "polling_places": [
+                {
+                  "code": "6",
+                  "name": "Mesa 06"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "2",
+          "name": "Carabobo",
+          "municipalities": [
+            {
+              "code": "7",
+              "name": "Valencia",
+              "polling_places": [
+                {
+                  "code": "23",
+                  "name": "Mesa 23"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "3",
+          "name": "Distrito Capital",
+          "municipalities": [
+            {
+              "code": "24",
+              "name": "Bolivariano Libertador",
+              "polling_places": [
+                {
+                  "code": "25",
+                  "name": "Mesa 25"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "4",
+          "name": "Miranda",
+          "municipalities": [
+            {
+              "code": "5",
+              "name": "Libertador-Miranda",
+              "polling_places": [
+                {
+                  "code": "11",
+                  "name": "Mesa 11"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "5",
+          "name": "La Guaira",
+          "municipalities": [
+            {
+              "code": "8",
+              "name": "Vargas",
+              "polling_places": [
+                {
+                  "code": "24",
+                  "name": "Mesa 24"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "3",
+      "name": "Cordillera Oriental",
+      "states": [
+        {
+          "code": "6",
+          "name": "Sucre",
+          "municipalities": [
+            {
+              "code": "11",
+              "name": "Sucre",
+              "polling_places": [
+                {
+                  "code": "20",
+                  "name": "Mesa 20"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "4",
+      "name": "Sistema Coriano",
+      "states": [
+        {
+          "code": "20",
+          "name": "Falcón",
+          "municipalities": [
+            {
+              "code": "2",
+              "name": "Miranda",
+              "polling_places": [
+                {
+                  "code": "14",
+                  "name": "Mesa 14"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "21",
+          "name": "Lara",
+          "municipalities": [
+            {
+              "code": "3",
+              "name": "Iribarren",
+              "polling_places": [
+                {
+                  "code": "8",
+                  "name": "Mesa 08"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "22",
+          "name": "Yaracuy",
+          "municipalities": [
+            {
+              "code": "4",
+              "name": "San Felipe",
+              "polling_places": [
+                {
+                  "code": "16",
+                  "name": "Mesa 16"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "5",
+      "name": "Depresión del Lago de Maracaibo",
+      "states": [
+        {
+          "code": "7",
+          "name": "Zulia",
+          "municipalities": [
+            {
+              "code": "1",
+              "name": "Maracaibo",
+              "polling_places": [
+                {
+                  "code": "12",
+                  "name": "Mesa 12"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "6",
+      "name": "Los Llanos",
+      "states": [
+        {
+          "code": "13",
+          "name": "Anzoátegui",
+          "municipalities": [
+            {
+              "code": "9",
+              "name": "Simón Bolívar",
+              "polling_places": [
+                {
+                  "code": "19",
+                  "name": "Mesa 19"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "14",
+          "name": "Apure",
+          "municipalities": [
+            {
+              "code": "21",
+              "name": "San Fernando",
+              "polling_places": [
+                {
+                  "code": "17",
+                  "name": "Mesa 17"
+                },
+                {
+                  "code": "18",
+                  "name": "Mesa 18"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "15",
+          "name": "Monagas",
+          "municipalities": [
+            {
+              "code": "10",
+              "name": "Maturín",
+              "polling_places": [
+                {
+                  "code": "13",
+                  "name": "Mesa 13"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "16",
+          "name": "Barinas",
+          "municipalities": [
+            {
+              "code": "17",
+              "name": "Barinas",
+              "polling_places": [
+                {
+                  "code": "4",
+                  "name": "Mesa 04"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "17",
+          "name": "Cojedes",
+          "municipalities": [
+            {
+              "code": "20",
+              "name": "Ezequiel Zamora",
+              "polling_places": [
+                {
+                  "code": "5",
+                  "name": "Mesa 05"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "18",
+          "name": "Guárico",
+          "municipalities": [
+            {
+              "code": "19",
+              "name": "Juan Germán Roscio",
+              "polling_places": [
+                {
+                  "code": "9",
+                  "name": "Mesa 09"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "19",
+          "name": "Portuguesa",
+          "municipalities": [
+            {
+              "code": "18",
+              "name": "Guanare",
+              "polling_places": [
+                {
+                  "code": "7",
+                  "name": "Mesa 07"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "7",
+      "name": "Sistema Deltaico",
+      "states": [
+        {
+          "code": "23",
+          "name": "Delta Amacuro",
+          "municipalities": [
+            {
+              "code": "13",
+              "name": "Tucupita",
+              "polling_places": [
+                {
+                  "code": "22",
+                  "name": "Mesa 22"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "8",
+      "name": "Sur del Orinoco",
+      "states": [
+        {
+          "code": "24",
+          "name": "Amazonas",
+          "municipalities": [
+            {
+              "code": "23",
+              "name": "Atures",
+              "polling_places": [
+                {
+                  "code": "3",
+                  "name": "Mesa 03"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "25",
+          "name": "Bolívar",
+          "municipalities": [
+            {
+              "code": "22",
+              "name": "Angostura del Orinoco",
+              "polling_places": [
+                {
+                  "code": "1",
+                  "name": "Mesa 01"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "9",
+      "name": "Las Islas",
+      "states": [
+        {
+          "code": "9",
+          "name": "Nueva Esparta",
+          "municipalities": [
+            {
+              "code": "12",
+              "name": "Arismendi",
+              "polling_places": [
+                {
+                  "code": "2",
+                  "name": "Mesa 02"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

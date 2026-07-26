@@ -38,9 +38,18 @@ cd apps/backend && alembic upgrade head
 # Seed admin (opcional)
 cd apps/backend && python -m scripts.seed_admin
 
-# Seed territorio N2–N5 (opcional; editar scripts/seed_data/territory.json
-# o exportar desde otro entorno con python -m scripts.export_territory)
+# Seed territorio N2–N5 (opcional; exportar desde otro entorno con
+# python -m scripts.export_territory — no usar la plantilla inventada)
 cd apps/backend && python -m scripts.seed_territory
+
+# Seed padrón / elecciones / planchas (siempre desde export local):
+#   python -m scripts.export_members --out members-export.json
+#   python -m scripts.export_elections --out elections-export.json
+#   python -m scripts.export_slates --out slates-export.json
+# Luego en el servidor:
+#   SEED_MEMBERS_FILE=... python -m scripts.seed_members
+#   SEED_ELECTIONS_FILE=... python -m scripts.seed_elections
+#   SEED_SLATES_FILE=... python -m scripts.seed_slates
 
 # API
 uvicorn app.main:app --reload --app-dir apps/backend --port 8000

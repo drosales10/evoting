@@ -1,0 +1,179 @@
+{
+  "organization_slug": "sociedad-forestales-afines",
+  "elections": [
+    {
+      "election_title": "Proceso Electoral SVIFyA 2026",
+      "slates": [
+        {
+          "name": "Aliados Forestales 2026",
+          "slogan": "Alianza Profesional y Gremial al Servicio del Ambiente!",
+          "logo_url": null,
+          "work_plan_pdf_url": null,
+          "video_url": null,
+          "status": "PENDING",
+          "proxy_registry_code": null,
+          "proxy_dni": null,
+          "proxy_email": null,
+          "candidates": [
+            {
+              "position_code": "PRESIDENTE",
+              "registry_code": "1631",
+              "dni": "9007759",
+              "email": "civ1631@gmail.com",
+              "bio": "Primer registro del Padrón Electoral",
+              "photo_url": null
+            },
+            {
+              "position_code": "SECRETARIO",
+              "registry_code": "1490",
+              "dni": "7507284",
+              "email": "civ1490@gmail.com",
+              "bio": "Tercer registro del Padrón Electoral",
+              "photo_url": null
+            },
+            {
+              "position_code": "TESORERO",
+              "registry_code": "2141",
+              "dni": "10036754",
+              "email": "civ2141@gmail.com",
+              "bio": "Quinto registro del Padrón Electoral",
+              "photo_url": null
+            },
+            {
+              "position_code": "VOCAL1",
+              "registry_code": "2279",
+              "dni": "12220713",
+              "email": "civ2279@gmail.com",
+              "bio": "Octavo registro del Padrón Electoral",
+              "photo_url": null
+            }
+          ]
+        },
+        {
+          "name": "Leñadores 2026",
+          "slogan": "Motivados por el racional aprovechamiento del Bosque!",
+          "logo_url": null,
+          "work_plan_pdf_url": null,
+          "video_url": null,
+          "status": "PENDING",
+          "proxy_registry_code": "49",
+          "proxy_dni": "441789",
+          "proxy_email": "civ49@gmail.com",
+          "candidates": [
+            {
+              "position_code": "PRESIDENTE",
+              "registry_code": "2468",
+              "dni": "14570031",
+              "email": "civ2468@gmail.com",
+              "bio": null,
+              "photo_url": null
+            },
+            {
+              "position_code": "SECRETARIO",
+              "registry_code": "2278",
+              "dni": "10717058",
+              "email": "civ2278@gmail.com",
+              "bio": null,
+              "photo_url": null
+            },
+            {
+              "position_code": "TESORERO",
+              "registry_code": "1630",
+              "dni": "8023687",
+              "email": "civ1630@gmail.com",
+              "bio": null,
+              "photo_url": null
+            },
+            {
+              "position_code": "VOCAL1",
+              "registry_code": "681",
+              "dni": "5198721",
+              "email": "civ681@gmail.com",
+              "bio": null,
+              "photo_url": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "election_title": "Proceso Electoral SVIFyA 2026 Seccional Monagas",
+      "slates": [
+        {
+          "name": "Progreso Ambiental Monagas",
+          "slogan": "Nuestro norte siempre será el Desarrollo de Monagas!",
+          "logo_url": null,
+          "work_plan_pdf_url": null,
+          "video_url": null,
+          "status": "PENDING",
+          "proxy_registry_code": null,
+          "proxy_dni": null,
+          "proxy_email": null,
+          "candidates": [
+            {
+              "position_code": "PRESIDENTE",
+              "registry_code": "2434",
+              "dni": "13097171",
+              "email": "civ2434@gmail.com",
+              "bio": "Biografia de Katty Calderón",
+              "photo_url": null
+            },
+            {
+              "position_code": "SECRETARIO",
+              "registry_code": "2797",
+              "dni": "11007315",
+              "email": "civ2797@gmail.com",
+              "bio": "Bibliografía de Jesús Cova",
+              "photo_url": null
+            },
+            {
+              "position_code": "TESORERO",
+              "registry_code": "2734",
+              "dni": "13447271",
+              "email": "civ2734@gmail.com",
+              "bio": "Biografía de Janeth Gil",
+              "photo_url": null
+            }
+          ]
+        },
+        {
+          "name": "Soluciones Forestales Oriente",
+          "slogan": "Por el cumplimiento de proyectos forestales eficientes!",
+          "logo_url": null,
+          "work_plan_pdf_url": null,
+          "video_url": null,
+          "status": "PENDING",
+          "proxy_registry_code": null,
+          "proxy_dni": null,
+          "proxy_email": null,
+          "candidates": [
+            {
+              "position_code": "PRESIDENTE",
+              "registry_code": "2733",
+              "dni": "16125947",
+              "email": "civ2733@gmail.com",
+              "bio": "Biografía de Carlos Guaramato",
+              "photo_url": null
+            },
+            {
+              "position_code": "SECRETARIO",
+              "registry_code": "2692",
+              "dni": "17206144",
+              "email": "civ2692@gmail.com",
+              "bio": "Biografía de Francisco Guerrero",
+              "photo_url": null
+            },
+            {
+              "position_code": "TESORERO",
+              "registry_code": "2715",
+              "dni": "13804382",
+              "email": "civ2715@gmail.com",
+              "bio": "Biografía de Antonio Hoyer",
+              "photo_url": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
