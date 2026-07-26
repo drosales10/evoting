@@ -126,7 +126,10 @@ async def export_territory(organization_slug: str) -> dict[str, Any]:
         "regions": regions_payload,
         "_meta": {
             "units_with_geojson": with_geo,
-            "note": "Geometries live in geojson JSONB (N1–N5). PostGIS geom is not used by the app.",
+            "note": (
+                "Geometries live in geojson JSONB (N1–N5). "
+                "PostGIS geom is not used by the app."
+            ),
         },
     }
 

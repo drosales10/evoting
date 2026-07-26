@@ -13,7 +13,6 @@ import json
 import os
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import select
