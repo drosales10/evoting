@@ -28,8 +28,18 @@ pnpm build:frontend
 
 echo "==> venv Python + dependencias"
 cd apps/backend
+# Si un intento anterior falló (sin ensurepip), limpia el venv roto.
+if [[ -d .venv ]] && [[ ! -x .venv/bin/pip ]]; then
+  echo "venv incompleto detectado; recreando..."
+  rm -rf .venv
+fi
 if [[ ! -d .venv ]]; then
-  python3.12 -m venv .venv
+  if ! python3.12 -m venv .venv; then
+    echo "ERROR: no se pudo crear el venv."
+    echo "En el servidor ejecuta: sudo apt-get install -y python3.12-venv python3.12-dev"
+    echo "Luego: rm -rf apps/backend/.venv && bash deploy/scripts/deploy-app.sh"
+    exit 1
+  fi
 fi
 # shellcheck disable=SC1091
 source .venv/bin/activate

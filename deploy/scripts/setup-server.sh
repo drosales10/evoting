@@ -14,13 +14,13 @@ corepack prepare pnpm@10.4.1 --activate
 echo "==> Python 3.12 + venv + build deps"
 apt-get update
 apt-get install -y software-properties-common
-# En Ubuntu 24.04 python3.12 suele venir por defecto; en 22.04 puede hacer falta deadsnakes.
+# En Ubuntu 24.04 python3.12 suele venir sin ensurepip; hay que instalar python3.12-venv siempre.
 if ! command -v python3.12 >/dev/null 2>&1; then
   add-apt-repository -y ppa:deadsnakes/ppa
   apt-get update
-  apt-get install -y python3.12 python3.12-venv python3.12-dev
 fi
-apt-get install -y build-essential libpq-dev
+apt-get install -y python3.12 python3.12-venv python3.12-dev build-essential libpq-dev
+python3.12 -m venv /tmp/evoting-venv-check && rm -rf /tmp/evoting-venv-check
 
 echo "==> PostGIS (extensión para migraciones geo)"
 PG_VER="$(psql --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)"
