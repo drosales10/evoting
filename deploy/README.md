@@ -95,6 +95,20 @@ Valores críticos:
 - `CORS_ORIGINS=["https://evoting.dennyrosales.com"]`
 - `NEXT_PUBLIC_API_URL=https://evoting.dennyrosales.com`
 - `APP_PUBLIC_URL=https://evoting.dennyrosales.com`
+- `SMTP_FROM="eVoting <no-reply@evoting.dennyrosales.com>"` (dominio verificado en Mailtrap)
+- `MAILTRAP_API_TOKEN` + `MAILTRAP_API_MODE=sending`
+
+`deploy/pm2/ecosystem.config.cjs` lee el `.env` de la raíz al arrancar la API. Tras editar `.env`:
+
+```bash
+cd /var/www/html/evoting
+pm2 delete evoting-api   # solo si PM2 aún tiene un SMTP_FROM viejo “pegado”
+pm2 start deploy/pm2/ecosystem.config.cjs --only evoting-api
+pm2 save
+pm2 show evoting-api | grep -i SMTP
+```
+
+En cambios posteriores basta `pm2 restart evoting-api --update-env` desde un shell **sin** `export SMTP_FROM=...` antiguo, o reinstalar el proceso con el ecosystem (como arriba) y `pm2 save`.
 
 ---
 
