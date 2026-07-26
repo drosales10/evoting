@@ -44,10 +44,13 @@ pnpm dev:frontend
 
 Con Docker: `docker compose up --build` (ver `docker-compose.yml`).
 
+Producción (DigitalOcean + nginx + PM2): ver [deploy/README.md](deploy/README.md).
+
 ## Documentación operativa
 
 | Documento | Contenido |
 |-----------|-----------|
+| [deploy/README.md](deploy/README.md) | Droplet, nginx, SSL, dominio `evoting.dennyrosales.com` |
 | [docs/Go_Live_Checklist.md](docs/Go_Live_Checklist.md) | Criterios para elección oficial |
 | [docs/Pilot_Archive.md](docs/Pilot_Archive.md) | Archivar piloto y no publicar votos de prueba |
 | [docs/Key_Ceremony.md](docs/Key_Ceremony.md) | Ceremonia de claves y custodia |
