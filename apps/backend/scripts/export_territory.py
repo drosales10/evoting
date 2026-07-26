@@ -1,12 +1,9 @@
-"""Export territorial hierarchy N2–N5 to JSON (for seeding another environment).
+"""Export territorial hierarchy N1–N5 including GeoJSON geometries.
 
-Usage (from apps/backend):
+  python -m scripts.export_territory --org sociedad-forestales-afines \\
+    --out territory-geo-export.json
 
-  SEED_ADMIN_ORG_SLUG=sociedad-forestales-afines \\
-    python -m scripts.export_territory > territory-export.json
-
-  # Or write to a path
-  python -m scripts.export_territory --out /tmp/territory.json
+Use --compact for a smaller file (no pretty-print).
 """
 
 from __future__ import annotations
@@ -31,6 +28,12 @@ from app.models import (
     ElectoralState,
     Organization,
 )
+
+
+def _unit(code: str, name: str, geojson: dict[str, Any] | None, **extra: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {"code": code, "name": name, "geojson": geojson}
+    row.update(extra)
+    return row
 
 
 async def export_territory(organization_slug: str) -> dict[str, Any]:
@@ -71,6 +74,7 @@ async def export_territory(organization_slug: str) -> dict[str, Any]:
                 .order_by(ElectoralPollingPlace.code)
             )
         ).all()
+        org_geojson = organization.geojson
 
     states_by_region: dict[UUID, list[ElectoralState]] = {}
     for state in states:
@@ -84,6 +88,14 @@ async def export_territory(organization_slug: str) -> dict[str, Any]:
     for mesa in polling_places:
         mesas_by_mun.setdefault(mesa.municipality_id, []).append(mesa)
 
+    with_geo = {
+        "organization": 1 if org_geojson else 0,
+        "regions": sum(1 for r in regions if r.geojson),
+        "states": sum(1 for s in states if s.geojson),
+        "municipalities": sum(1 for m in municipalities if m.geojson),
+        "polling_places": sum(1 for p in polling_places if p.geojson),
+    }
+
     regions_payload: list[dict[str, Any]] = []
     for region in regions:
         region_states: list[dict[str, Any]] = []
@@ -91,54 +103,64 @@ async def export_territory(organization_slug: str) -> dict[str, Any]:
             state_muns: list[dict[str, Any]] = []
             for mun in muns_by_state.get(state.id, []):
                 state_muns.append(
-                    {
-                        "code": mun.code,
-                        "name": mun.name,
-                        "polling_places": [
-                            {"code": mesa.code, "name": mesa.name}
+                    _unit(
+                        mun.code,
+                        mun.name,
+                        mun.geojson,
+                        polling_places=[
+                            _unit(mesa.code, mesa.name, mesa.geojson)
                             for mesa in mesas_by_mun.get(mun.id, [])
                         ],
-                    }
+                    )
                 )
             region_states.append(
-                {
-                    "code": state.code,
-                    "name": state.name,
-                    "municipalities": state_muns,
-                }
+                _unit(state.code, state.name, state.geojson, municipalities=state_muns)
             )
         regions_payload.append(
-            {
-                "code": region.code,
-                "name": region.name,
-                "states": region_states,
-            }
+            _unit(region.code, region.name, region.geojson, states=region_states)
         )
 
     return {
         "organization_slug": organization_slug,
+        "organization_geojson": org_geojson,
         "regions": regions_payload,
+        "_meta": {
+            "units_with_geojson": with_geo,
+            "note": "Geometries live in geojson JSONB (N1–N5). PostGIS geom is not used by the app.",
+        },
     }
 
 
 async def _run(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Export territory hierarchy to JSON")
+    parser = argparse.ArgumentParser(description="Export territory + GeoJSON")
     parser.add_argument(
         "--org",
         default=settings.seed_admin_org_slug or os.environ.get("SEED_ADMIN_ORG_SLUG"),
-        help="Organization slug (default: SEED_ADMIN_ORG_SLUG)",
     )
-    parser.add_argument("--out", default=None, help="Output file (default: stdout)")
+    parser.add_argument("--out", default=None)
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Minified JSON (smaller upload)",
+    )
     args = parser.parse_args(argv)
     if not args.org:
         raise SystemExit("Pass --org or set SEED_ADMIN_ORG_SLUG")
 
     try:
         payload = await export_territory(args.org)
-        text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        meta = payload.get("_meta", {})
+        if args.compact:
+            text = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
+        else:
+            text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
         if args.out:
             Path(args.out).write_text(text, encoding="utf-8")
-            print(f"Wrote {args.out}", file=sys.stderr)
+            size_mb = Path(args.out).stat().st_size / (1024 * 1024)
+            print(
+                f"Wrote {args.out} ({size_mb:.2f} MiB) geojson={meta.get('units_with_geojson')}",
+                file=sys.stderr,
+            )
         else:
             sys.stdout.write(text)
     finally:

@@ -1,17 +1,10 @@
-"""Seed territorial hierarchy N2–N5 from a JSON file (idempotent by code).
+"""Seed territorial hierarchy N2–N5 + GeoJSON (N1–N5) from export JSON.
 
-Usage (from apps/backend, with DATABASE_URL and org available):
+Idempotent by code. Applies geojson when the key is present in the JSON.
+Does not delete units missing from the file.
 
-  # Usa SEED_ADMIN_ORG_SLUG y el JSON por defecto
-  python -m scripts.seed_territory
-
-  # JSON / org explícitos
-  SEED_TERRITORY_FILE=/path/to/territory.json \\
-  SEED_ADMIN_ORG_SLUG=sociedad-forestales-afines \\
+  SEED_TERRITORY_FILE=/path/to/territory-geo-export.json \\
     python -m scripts.seed_territory
-
-Does not delete units missing from the file. Updates name when code exists.
-Codes are normalized to UPPER (same as admin API).
 """
 
 from __future__ import annotations
@@ -40,6 +33,47 @@ DEFAULT_DATA_PATH = Path(__file__).resolve().parent / "seed_data" / "territory.j
 
 def _norm_code(value: str) -> str:
     return value.strip().upper()
+
+
+def _coerce_stored_geojson(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Same normalization as admin territory API."""
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise RuntimeError("geojson must be an object or null")
+    geo_type = payload.get("type")
+    if geo_type == "Feature":
+        return payload
+    if geo_type == "FeatureCollection":
+        features = payload.get("features") or []
+        first = next((f for f in features if isinstance(f, dict) and f.get("geometry")), None)
+        if first:
+            return {
+                "type": "Feature",
+                "geometry": first["geometry"],
+                "properties": first.get("properties") or {},
+            }
+        return payload
+    if geo_type in {
+        "Point",
+        "MultiPoint",
+        "Polygon",
+        "MultiPolygon",
+        "LineString",
+        "MultiLineString",
+        "GeometryCollection",
+    }:
+        return {"type": "Feature", "geometry": payload, "properties": {}}
+    return payload
+
+
+def _apply_geojson(entity: Any, raw: dict[str, Any], counts: dict[str, int]) -> None:
+    if "geojson" not in raw:
+        return
+    new_value = _coerce_stored_geojson(raw.get("geojson"))
+    if entity.geojson != new_value:
+        entity.geojson = new_value
+        counts["geojson_updated"] += 1
 
 
 def _load_payload(path: Path) -> dict[str, Any]:
@@ -85,6 +119,8 @@ async def seed_territory(
         "municipalities_updated": 0,
         "polling_places_created": 0,
         "polling_places_updated": 0,
+        "geojson_updated": 0,
+        "organization_geojson_updated": 0,
     }
 
     async with factory() as session:
@@ -96,6 +132,12 @@ async def seed_territory(
                 f"Organization slug={slug!r} not found. Run seed_admin first."
             )
         org_id = organization.id
+
+        if "organization_geojson" in payload:
+            new_org_geo = _coerce_stored_geojson(payload.get("organization_geojson"))
+            if organization.geojson != new_org_geo:
+                organization.geojson = new_org_geo
+                counts["organization_geojson_updated"] = 1
 
         for region_raw in payload["regions"]:
             region_code = _norm_code(str(region_raw["code"]))
@@ -112,13 +154,20 @@ async def seed_territory(
                     organization_id=org_id,
                     code=region_code,
                     name=region_name,
+                    geojson=_coerce_stored_geojson(region_raw.get("geojson"))
+                    if "geojson" in region_raw
+                    else None,
                 )
                 session.add(region)
                 await session.flush()
                 counts["regions_created"] += 1
-            elif region.name != region_name:
-                region.name = region_name
-                counts["regions_updated"] += 1
+                if region.geojson is not None:
+                    counts["geojson_updated"] += 1
+            else:
+                if region.name != region_name:
+                    region.name = region_name
+                    counts["regions_updated"] += 1
+                _apply_geojson(region, region_raw, counts)
 
             for state_raw in region_raw.get("states") or []:
                 state_code = _norm_code(str(state_raw["code"]))
@@ -136,10 +185,15 @@ async def seed_territory(
                         region_id=region.id,
                         code=state_code,
                         name=state_name,
+                        geojson=_coerce_stored_geojson(state_raw.get("geojson"))
+                        if "geojson" in state_raw
+                        else None,
                     )
                     session.add(state)
                     await session.flush()
                     counts["states_created"] += 1
+                    if state.geojson is not None:
+                        counts["geojson_updated"] += 1
                 else:
                     changed = False
                     if state.region_id != region.id:
@@ -150,6 +204,7 @@ async def seed_territory(
                         changed = True
                     if changed:
                         counts["states_updated"] += 1
+                    _apply_geojson(state, state_raw, counts)
 
                 for mun_raw in state_raw.get("municipalities") or []:
                     mun_code = _norm_code(str(mun_raw["code"]))
@@ -167,10 +222,15 @@ async def seed_territory(
                             state_id=state.id,
                             code=mun_code,
                             name=mun_name,
+                            geojson=_coerce_stored_geojson(mun_raw.get("geojson"))
+                            if "geojson" in mun_raw
+                            else None,
                         )
                         session.add(municipality)
                         await session.flush()
                         counts["municipalities_created"] += 1
+                        if municipality.geojson is not None:
+                            counts["geojson_updated"] += 1
                     else:
                         changed = False
                         if municipality.state_id != state.id:
@@ -181,6 +241,7 @@ async def seed_territory(
                             changed = True
                         if changed:
                             counts["municipalities_updated"] += 1
+                        _apply_geojson(municipality, mun_raw, counts)
 
                     for mesa_raw in mun_raw.get("polling_places") or []:
                         mesa_code = _norm_code(str(mesa_raw["code"]))
@@ -192,16 +253,20 @@ async def seed_territory(
                             )
                         )
                         if mesa is None:
-                            session.add(
-                                ElectoralPollingPlace(
-                                    id=uuid4(),
-                                    organization_id=org_id,
-                                    municipality_id=municipality.id,
-                                    code=mesa_code,
-                                    name=mesa_name,
-                                )
+                            mesa = ElectoralPollingPlace(
+                                id=uuid4(),
+                                organization_id=org_id,
+                                municipality_id=municipality.id,
+                                code=mesa_code,
+                                name=mesa_name,
+                                geojson=_coerce_stored_geojson(mesa_raw.get("geojson"))
+                                if "geojson" in mesa_raw
+                                else None,
                             )
+                            session.add(mesa)
                             counts["polling_places_created"] += 1
+                            if mesa.geojson is not None:
+                                counts["geojson_updated"] += 1
                         else:
                             changed = False
                             if mesa.municipality_id != municipality.id:
@@ -212,6 +277,7 @@ async def seed_territory(
                                 changed = True
                             if changed:
                                 counts["polling_places_updated"] += 1
+                            _apply_geojson(mesa, mesa_raw, counts)
 
         await session.commit()
 
