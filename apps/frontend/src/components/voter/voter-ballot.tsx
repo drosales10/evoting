@@ -350,14 +350,14 @@ export function VoterBallot() {
         return;
       }
 
-      const zkpProof = election.zkp_verification_enabled
-        ? await buildIntegrityProof(
-            encrypted.encryptedPayload,
-            selectedSlate,
-            encrypted.nonce,
-            election.slate_set_hash,
-          )
-        : `development-pilot-proof-${encrypted.receiptHash}`;
+      // Siempre emitir ballot-integrity-v1. El stub development-pilot-proof-* solo
+      // se acepta con ENVIRONMENT=development + VOTER_TEST_MODE (piloto local).
+      const zkpProof = await buildIntegrityProof(
+        encrypted.encryptedPayload,
+        selectedSlate,
+        encrypted.nonce,
+        election.slate_set_hash,
+      );
 
       // Releer CSRF por si voterFetch renovó la sesión en el issuance.
       const csrfToken = getVoterCsrfToken();
