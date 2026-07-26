@@ -181,6 +181,12 @@ function mapLoadError(status: number, detail?: unknown): { blocker: BallotBlocke
     normalized.includes("no eligibility") ||
     normalized.includes("autoriz")
   ) {
+    if (normalized.includes("csrf")) {
+      return {
+        blocker: "not_authorized",
+        message: "Sesión CSRF inválida. Cierra sesión e inicia de nuevo en /vote/login.",
+      };
+    }
     return {
       blocker: "not_authorized",
       message:
@@ -308,30 +314,42 @@ export function VoterBallot() {
     setBusy(true);
     setMessage(null);
     try {
-      const encrypted = await encryptSelection(election, selectedSlate);
-      const csrfToken = getVoterCsrfToken();
-      if (!csrfToken) {
-        setMessage("La sesión VOTER no tiene protección CSRF. Inicia sesión nuevamente.");
+      let encrypted: Awaited<ReturnType<typeof encryptSelection>>;
+      try {
+        encrypted = await encryptSelection(election, selectedSlate);
+      } catch (error: unknown) {
+        setMessage(
+          `No se pudo cifrar el voto con la clave pública: ${
+            error instanceof Error ? error.message : "clave inválida o no soportada"
+          }`,
+        );
         return;
       }
+
       const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
       const issuanceResponse = await voterFetch(
         `${apiBase}/api/v1/voter/elections/${election.election_id}/issuance-token`,
-        {
-          method: "POST",
-          headers: { "X-CSRF-Token": csrfToken },
-        },
+        { method: "POST" },
       );
-      const issuancePayload = (await issuanceResponse.json()) as {
-        issuance_token?: string;
-        detail?: string;
-      };
+      let issuancePayload: { issuance_token?: string; detail?: unknown } = {};
+      try {
+        issuancePayload = (await issuanceResponse.json()) as typeof issuancePayload;
+      } catch {
+        setMessage(
+          `No se pudo emitir el token de voto (HTTP ${issuanceResponse.status}). Revisa Cloudflare/WAF o inicia sesión de nuevo.`,
+        );
+        return;
+      }
       if (!issuanceResponse.ok || !issuancePayload.issuance_token) {
         const mapped = mapLoadError(issuanceResponse.status, issuancePayload.detail);
         if (mapped.blocker) setBlocker(mapped.blocker);
-        setMessage(mapped.message || formatApiError(issuancePayload, "No se pudo emitir el token de un solo uso."));
+        setMessage(
+          mapped.message ||
+            formatApiError(issuancePayload, "No se pudo emitir el token de un solo uso."),
+        );
         return;
       }
+
       const zkpProof = election.zkp_verification_enabled
         ? await buildIntegrityProof(
             encrypted.encryptedPayload,
@@ -340,6 +358,14 @@ export function VoterBallot() {
             election.slate_set_hash,
           )
         : `development-pilot-proof-${encrypted.receiptHash}`;
+
+      // Releer CSRF por si voterFetch renovó la sesión en el issuance.
+      const csrfToken = getVoterCsrfToken();
+      if (!csrfToken) {
+        setMessage("La sesión VOTER no tiene protección CSRF. Inicia sesión nuevamente.");
+        return;
+      }
+
       const response = await voterFetch(
         `${apiBase}/api/v1/voter/elections/${election.election_id}/ballots`,
         {
@@ -357,7 +383,15 @@ export function VoterBallot() {
           }),
         },
       );
-      const payload = (await response.json()) as VoterBallotResponse & { detail?: string };
+      let payload: VoterBallotResponse & { detail?: unknown };
+      try {
+        payload = (await response.json()) as VoterBallotResponse & { detail?: unknown };
+      } catch {
+        setMessage(
+          `No se pudo registrar el voto (HTTP ${response.status}). Revisa Cloudflare/WAF o inicia sesión de nuevo.`,
+        );
+        return;
+      }
       if (!response.ok) {
         const mapped = mapLoadError(response.status, payload.detail);
         if (mapped.blocker) setBlocker(mapped.blocker);
@@ -368,8 +402,12 @@ export function VoterBallot() {
       setElection({ ...election, has_voted: true });
       setBlocker("already_voted");
       setSelectedSlate("");
-    } catch {
-      setMessage("No se pudo preparar o registrar el voto cifrado.");
+    } catch (error: unknown) {
+      setMessage(
+        `No se pudo preparar o registrar el voto cifrado${
+          error instanceof Error ? `: ${error.message}` : ""
+        }`,
+      );
     } finally {
       setBusy(false);
     }
