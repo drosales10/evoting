@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { formatApiError } from "@/lib/api-error";
+import { notify } from "@/lib/notify";
 
 type VerifyPayload = {
   artifact_hash: string;
@@ -33,12 +34,18 @@ export default function VerifyArtifactPage() {
       .then(async (response) => {
         const payload = (await response.json()) as VerifyPayload;
         if (!response.ok) {
-          setError(formatApiError(payload, "No se pudo verificar el artefacto."));
+          const text = formatApiError(payload, "No se pudo verificar el artefacto.");
+          setError(text);
+          notify.error(text);
           return;
         }
         setData(payload);
       })
-      .catch(() => setError("No se pudo contactar la API pública."));
+      .catch(() => {
+        const text = "No se pudo contactar la API pública.";
+        setError(text);
+        notify.error(text);
+      });
   }, [params.artifactHash]);
 
   return (

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
-import { formatApiError } from "@/lib/api-error";
+import { notify } from "@/lib/notify";
 
 type Member = {
   id: string;
@@ -165,7 +165,6 @@ export function PadronCatalog() {
   const [regions, setRegions] = useState<TerritoryUnit[]>([]);
   const [states, setStates] = useState<TerritoryUnit[]>([]);
   const [municipalities, setMunicipalities] = useState<TerritoryUnit[]>([]);
-  const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState(emptyForm());
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
@@ -214,14 +213,13 @@ export function PadronCatalog() {
       });
       const payload = (await response.json()) as MemberList & { detail?: string };
       if (!response.ok) {
-        setMessage(formatApiError(payload, "No se pudo cargar el padrón."));
+        notify.apiError(payload, "No se pudo cargar el padrón.");
         return;
       }
       setData(payload);
-      setMessage(null);
       await loadSummary();
     } catch {
-      setMessage("Error de red al cargar el padrón.");
+      notify.error("Error de red al cargar el padrón.");
     } finally {
       setBusy(false);
     }
@@ -318,11 +316,11 @@ export function PadronCatalog() {
       });
       const payload = (await response.json()) as { detail?: string };
       if (!response.ok) {
-        setMessage(formatApiError(payload, "No se pudo crear el miembro."));
+        notify.apiError(payload, "No se pudo crear el miembro.");
         return;
       }
       setForm(emptyForm());
-      setMessage("Miembro creado correctamente.");
+      notify.success("Miembro creado correctamente.");
       await load();
     } finally {
       setBusy(false);
@@ -338,7 +336,7 @@ export function PadronCatalog() {
       });
       const payload = (await response.json()) as Member & { detail?: string };
       if (!response.ok) {
-        setMessage(formatApiError(payload, "No se pudo cargar el miembro."));
+        notify.apiError(payload, "No se pudo cargar el miembro.");
         return;
       }
       setSelected(payload);
@@ -369,13 +367,13 @@ export function PadronCatalog() {
       });
       const payload = (await response.json()) as Member & { detail?: string };
       if (!response.ok) {
-        setMessage(formatApiError(payload, "No se pudo actualizar el miembro."));
+        notify.apiError(payload, "No se pudo actualizar el miembro.");
         return;
       }
       setSelected(payload);
       setEditForm(memberToForm(payload));
       setPanelMode("preview");
-      setMessage("Miembro actualizado correctamente.");
+      notify.success("Miembro actualizado correctamente.");
       await load();
     } finally {
       setBusy(false);
@@ -395,11 +393,11 @@ export function PadronCatalog() {
       });
       if (!response.ok) {
         const payload = (await response.json().catch(() => ({}))) as { detail?: string };
-        setMessage(formatApiError(payload, "No se pudo eliminar el miembro."));
+        notify.apiError(payload, "No se pudo eliminar el miembro.");
         return;
       }
       if (selected?.id === member.id) closePanel();
-      setMessage("Miembro eliminado.");
+      notify.success("Miembro eliminado.");
       await load();
     } finally {
       setBusy(false);
@@ -419,11 +417,11 @@ export function PadronCatalog() {
       });
       const payload = (await response.json()) as Member & { detail?: string };
       if (!response.ok) {
-        setMessage(formatApiError(payload, "No se pudo cargar la foto."));
+        notify.apiError(payload, "No se pudo cargar la foto.");
         return;
       }
       setSelected(payload);
-      setMessage("Foto actualizada.");
+      notify.success("Foto actualizada.");
       await load();
     } finally {
       setPhotoBusy(false);
@@ -448,10 +446,10 @@ export function PadronCatalog() {
         detail?: string;
       };
       if (!response.ok) {
-        setMessage(formatApiError(payload, "Importación fallida."));
+        notify.apiError(payload, "Importación fallida.");
         return;
       }
-      setMessage(
+      notify.success(
         `${dryRun ? "Validación" : "Importación"}: +${payload.created ?? 0} / ~${payload.updated ?? 0} / fallos ${payload.failed ?? 0}`,
       );
       if (!dryRun) await load();
@@ -797,12 +795,6 @@ export function PadronCatalog() {
             Alta rápida
           </button>
         </form>
-
-        {message ? (
-          <p className="rounded-lg bg-[var(--accent)] px-3 py-2 text-sm text-[var(--primary-dark)]">
-            {message}
-          </p>
-        ) : null}
 
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">

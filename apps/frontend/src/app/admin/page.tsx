@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
-import { formatApiError } from "@/lib/api-error";
+import { notify } from "@/lib/notify";
 
 type MemberTypeCount = {
   member_type: string;
@@ -29,23 +29,22 @@ const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function AdminHomePage() {
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void fetch(`${apiUrl()}/api/v1/admin/overview`, { credentials: "include", cache: "no-store" })
       .then(async (response) => {
         const payload = (await response.json()) as Overview & { detail?: string };
         if (!response.ok) {
-          setError(
-            response.status === 401
-              ? "Sesión administrativa inactiva. Accede en /admin/login."
-              : formatApiError(payload, "No se pudo cargar el resumen."),
-          );
+          if (response.status === 401) {
+            notify.error("Sesión administrativa inactiva. Accede en /admin/login.");
+          } else {
+            notify.apiError(payload, "No se pudo cargar el resumen.");
+          }
           return;
         }
         setOverview(payload);
       })
-      .catch(() => setError("No se pudo contactar la API administrativa."));
+      .catch(() => notify.error("No se pudo contactar la API administrativa."));
   }, []);
 
   return (
@@ -57,8 +56,6 @@ export default function AdminHomePage() {
             Padrón, territorio, elecciones y geovisor viven en pantallas propias.
           </p>
         </div>
-
-        {error ? <p className="rounded-lg bg-[var(--accent)] px-3 py-2 text-sm">{error}</p> : null}
 
         {overview ? (
           <div className="notice">

@@ -6,7 +6,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import type { FeatureCollection } from "geojson";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
-import { formatApiError } from "@/lib/api-error";
+import { notify } from "@/lib/notify";
 
 const AdminMapCanvas = dynamic(
   () => import("@/components/admin/geovisor/AdminMapCanvas").then((m) => m.AdminMapCanvas),
@@ -48,7 +48,6 @@ function AdminGeovisorInner() {
   const requestedElection = searchParams.get("election") ?? "";
   const [data, setData] = useState<FeatureCollection | null>(null);
   const [levels, setLevels] = useState("N1,N2,N3,N4,N5");
-  const [message, setMessage] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [organization, setOrganization] = useState<TerritoryUnit | null>(null);
   const [regions, setRegions] = useState<TerritoryUnit[]>([]);
@@ -65,7 +64,7 @@ function AdminGeovisorInner() {
       { credentials: "include", cache: "no-store" },
     );
     if (!territoryRes.ok) {
-      setMessage("No se pudieron cargar las capas territoriales.");
+      notify.error("No se pudieron cargar las capas territoriales.");
       return;
     }
     const territory = (await territoryRes.json()) as FeatureCollection;
@@ -82,7 +81,6 @@ function AdminGeovisorInner() {
     }
 
     setData(mergeCollections(territory, results));
-    setMessage(null);
     setInfo(
       results
         ? "Overlay de participación (votaron / elegibles / %) activo."
@@ -147,7 +145,7 @@ function AdminGeovisorInner() {
 
   async function importGeojson(file: File) {
     if (!importTarget.id) {
-      setMessage("Selecciona una unidad territorial destino.");
+      notify.error("Selecciona una unidad territorial destino.");
       return;
     }
     const text = await file.text();
@@ -155,7 +153,7 @@ function AdminGeovisorInner() {
     try {
       payload = JSON.parse(text);
     } catch {
-      setMessage("El archivo no es JSON válido.");
+      notify.error("El archivo no es JSON válido.");
       return;
     }
     const response = await fetch(
@@ -169,10 +167,10 @@ function AdminGeovisorInner() {
     );
     if (!response.ok) {
       const err = await response.json().catch(() => null);
-      setMessage(formatApiError(err, "No se pudo importar el GeoJSON."));
+      notify.apiError(err, "No se pudo importar el GeoJSON.");
       return;
     }
-    setMessage(`GeoJSON importado en ${importTarget.level}.`);
+    notify.success(`GeoJSON importado en ${importTarget.level}.`);
     await load();
   }
 
@@ -263,7 +261,6 @@ function AdminGeovisorInner() {
             />
           </label>
         </div>
-        {message ? <p className="text-sm text-red-600 dark:text-amber-300">{message}</p> : null}
         {info ? <p className="text-sm text-[var(--muted)]">{info}</p> : null}
         <div className="h-[520px] overflow-hidden rounded-xl border border-[var(--line)]">
           <AdminMapCanvas data={data} />

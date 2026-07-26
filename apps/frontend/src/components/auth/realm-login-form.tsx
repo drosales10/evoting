@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
-import { formatHttpApiError } from "@/lib/api-error";
+import { notify } from "@/lib/notify";
 
 type RealmLoginFormProps = {
   realm: "ADMIN" | "VOTER";
@@ -31,14 +31,12 @@ export function RealmLoginForm({
   submitLabel,
   mfaCopy,
 }: RealmLoginFormProps) {
-  const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [mfaCredentials, setMfaCredentials] = useState<AdminCredentials | null>(null);
   const [voterChallengeId, setVoterChallengeId] = useState<string | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setMessage(null);
     setBusy(true);
 
     try {
@@ -55,9 +53,7 @@ export function RealmLoginForm({
         });
         const payload = await readJsonPayload(response);
         if (!response.ok) {
-          setMessage(
-            formatHttpApiError(response.status, payload, "No fue posible solicitar el OTP."),
-          );
+          notify.httpError(response.status, payload, "No fue posible solicitar el OTP.");
         } else if (
           typeof payload === "object" &&
           payload !== null &&
@@ -65,7 +61,9 @@ export function RealmLoginForm({
           typeof (payload as { challenge_id?: unknown }).challenge_id === "string"
         ) {
           setVoterChallengeId((payload as { challenge_id: string }).challenge_id);
-          setMessage("Solicitud aceptada. Introduce el código OTP de desarrollo.");
+          notify.success("Solicitud aceptada", {
+            description: "Introduce el código OTP de desarrollo.",
+          });
         } else {
           const successMessage =
             typeof payload === "object" &&
@@ -74,7 +72,7 @@ export function RealmLoginForm({
             typeof (payload as { message?: unknown }).message === "string"
               ? (payload as { message: string }).message
               : "Si el elector es elegible, recibirá un OTP.";
-          setMessage(successMessage);
+          notify.info(successMessage);
         }
         return;
       }
@@ -93,16 +91,16 @@ export function RealmLoginForm({
       });
       const payload = await readJsonPayload(response);
       if (!response.ok) {
-        setMessage(
-          formatHttpApiError(response.status, payload, "No fue posible iniciar sesión."),
-        );
+        notify.httpError(response.status, payload, "No fue posible iniciar sesión.");
       } else if (
         typeof payload === "object" &&
         payload !== null &&
         (payload as { status?: string }).status === "MFA_REQUIRED"
       ) {
         setMfaCredentials(credentials);
-        setMessage("Credenciales correctas. Introduce el código de tu autenticador.");
+        notify.success("Credenciales correctas", {
+          description: "Introduce el código de tu autenticador.",
+        });
       } else {
         const csrf =
           typeof payload === "object" &&
@@ -113,11 +111,11 @@ export function RealmLoginForm({
         if (csrf) {
           window.sessionStorage.setItem("evoting_admin_csrf", csrf);
         }
-        setMessage("Sesión administrativa iniciada.");
+        notify.success("Sesión administrativa iniciada.");
         window.location.assign("/admin");
       }
     } catch {
-      setMessage("No se pudo contactar la API de autenticación.");
+      notify.error("No se pudo contactar la API de autenticación.");
     } finally {
       setBusy(false);
     }
@@ -126,7 +124,6 @@ export function RealmLoginForm({
   async function handleVoterVerify(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!voterChallengeId) return;
-    setMessage(null);
     setBusy(true);
     try {
       const form = new FormData(event.currentTarget);
@@ -142,7 +139,7 @@ export function RealmLoginForm({
       });
       const payload = await readJsonPayload(response);
       if (!response.ok) {
-        setMessage(formatHttpApiError(response.status, payload, "El código OTP no es válido."));
+        notify.httpError(response.status, payload, "El código OTP no es válido.");
         return;
       }
       const csrf =
@@ -152,13 +149,14 @@ export function RealmLoginForm({
           ? (payload as { csrf_token: string }).csrf_token
           : null;
       if (!csrf) {
-        setMessage("La sesión VOTER no devolvió protección CSRF.");
+        notify.error("La sesión VOTER no devolvió protección CSRF.");
         return;
       }
       window.sessionStorage.setItem("evoting_voter_csrf", csrf);
+      notify.success("Sesión de votante iniciada.");
       window.location.assign("/vote");
     } catch {
-      setMessage("No se pudo contactar la API de autenticación.");
+      notify.error("No se pudo contactar la API de autenticación.");
     } finally {
       setBusy(false);
     }
@@ -167,7 +165,6 @@ export function RealmLoginForm({
   async function handleMfaSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!mfaCredentials) return;
-    setMessage(null);
     setBusy(true);
 
     try {
@@ -181,7 +178,7 @@ export function RealmLoginForm({
       });
       const payload = await readJsonPayload(response);
       if (!response.ok) {
-        setMessage(formatHttpApiError(response.status, payload, "El código MFA no es válido."));
+        notify.httpError(response.status, payload, "El código MFA no es válido.");
       } else if (
         typeof payload === "object" &&
         payload !== null &&
@@ -194,11 +191,11 @@ export function RealmLoginForm({
         if (csrf) {
           window.sessionStorage.setItem("evoting_admin_csrf", csrf);
         }
-        setMessage("Sesión administrativa iniciada.");
+        notify.success("Sesión administrativa iniciada.");
         window.location.assign("/admin");
       }
     } catch {
-      setMessage("No se pudo contactar la API de autenticación.");
+      notify.error("No se pudo contactar la API de autenticación.");
     } finally {
       setBusy(false);
     }
@@ -226,7 +223,6 @@ export function RealmLoginForm({
             {busy ? "Verificando…" : "Verificar MFA"}
           </button>
         </form>
-        {message ? <p className="form-message" role="status">{message}</p> : null}
       </div>
     );
   }
@@ -234,7 +230,10 @@ export function RealmLoginForm({
   if (realm === "VOTER" && voterChallengeId) {
     return (
       <div className="auth-form">
-        <p className="form-help">Introduce el código recibido por correo. En el piloto local, también se registra en la terminal del backend.</p>
+        <p className="form-help">
+          Introduce el código recibido por correo. En el piloto local, también se registra en la
+          terminal del backend.
+        </p>
         <form onSubmit={handleVoterVerify}>
           <label htmlFor="voter-otp-code">Código OTP</label>
           <input
@@ -253,7 +252,6 @@ export function RealmLoginForm({
             {busy ? "Verificando…" : "Verificar OTP"}
           </button>
         </form>
-        {message ? <p className="form-message" role="status">{message}</p> : null}
       </div>
     );
   }
@@ -297,7 +295,6 @@ export function RealmLoginForm({
       <button className="button button-primary" type="submit" disabled={busy}>
         {busy ? "Procesando…" : submitLabel}
       </button>
-      {message ? <p className="form-message" role="status">{message}</p> : null}
     </form>
   );
 }

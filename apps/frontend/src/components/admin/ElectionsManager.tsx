@@ -11,7 +11,7 @@ import {
   type ElectionsTab,
 } from "@/components/admin/admin-overview";
 import { datetimeLocalToUtcIso, formatAppDateTime } from "@/lib/datetime";
-import { formatApiError } from "@/lib/api-error";
+import { notify } from "@/lib/notify";
 
 type TerritoryUnit = { id: string; code: string; name: string; parent_id?: string | null };
 type Election = {
@@ -112,7 +112,6 @@ export function ElectionsManager() {
   const [scope, setScope] = useState<"NATIONAL" | "REGIONAL" | "STATE">("NATIONAL");
   const [regionId, setRegionId] = useState("");
   const [stateId, setStateId] = useState("");
-  const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ceremonyElectionId, setCeremonyElectionId] = useState("");
   const [overviewKey, setOverviewKey] = useState(0);
@@ -224,7 +223,6 @@ export function ElectionsManager() {
     event.preventDefault();
     const formElement = event.currentTarget;
     setBusy(true);
-    setMessage(null);
     const form = new FormData(formElement);
     try {
       const response = await fetch(`${apiUrl()}/api/v1/admin/elections`, {
@@ -244,10 +242,10 @@ export function ElectionsManager() {
       });
       const payload = (await response.json()) as Election & { detail?: string };
       if (!response.ok) {
-        setMessage(formatApiError(payload, "No se pudo crear la elección."));
+        notify.apiError(payload, "No se pudo crear la elección.");
         return;
       }
-      setMessage(`Elección creada con alcance ${payload.scope_level ?? scope}.`);
+      notify.success(`Elección creada con alcance ${payload.scope_level ?? scope}.`);
       formElement.reset();
       setScope("NATIONAL");
       setRegionId("");
@@ -693,11 +691,6 @@ export function ElectionsManager() {
                   </button>
                 </div>
               </form>
-              {message ? (
-                <p className="mt-4 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm dark:bg-[var(--accent)]">
-                  {message}
-                </p>
-              ) : null}
             </section>
           ) : null}
 

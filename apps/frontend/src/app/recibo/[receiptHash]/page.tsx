@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { APP_TIMEZONE, formatAppDateTime } from "@/lib/datetime";
 import { formatApiError } from "@/lib/api-error";
+import { notify } from "@/lib/notify";
 
 type PublicReceiptPayload = {
   exists: boolean;
@@ -29,12 +30,16 @@ export default function PublicReciboPage() {
     const hash = params.receiptHash?.trim().toLowerCase();
     if (!hash) {
       setLoading(false);
-      setError("Hash de recibo no válido.");
+      const text = "Hash de recibo no válido.";
+      setError(text);
+      notify.error(text);
       return;
     }
     if (hash.length !== 64 || !/^[0-9a-f]+$/.test(hash)) {
       setLoading(false);
-      setError("El identificador del recibo debe ser un hash hexadecimal de 64 caracteres.");
+      const text = "El identificador del recibo debe ser un hash hexadecimal de 64 caracteres.";
+      setError(text);
+      notify.error(text);
       return;
     }
 
@@ -47,16 +52,24 @@ export default function PublicReciboPage() {
       .then(async (response) => {
         const payload = (await response.json()) as PublicReceiptPayload;
         if (response.status === 404) {
-          setError("No se encontró un recibo con este identificador.");
+          const text = "No se encontró un recibo con este identificador.";
+          setError(text);
+          notify.error(text);
           return;
         }
         if (!response.ok) {
-          setError(formatApiError(payload, "No se pudo consultar el recibo."));
+          const text = formatApiError(payload, "No se pudo consultar el recibo.");
+          setError(text);
+          notify.error(text);
           return;
         }
         setData(payload);
       })
-      .catch(() => setError("No se pudo contactar la API pública."))
+      .catch(() => {
+        const text = "No se pudo contactar la API pública.";
+        setError(text);
+        notify.error(text);
+      })
       .finally(() => setLoading(false));
   }, [params.receiptHash]);
 

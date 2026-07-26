@@ -1,0 +1,83 @@
+{
+  "organization_slug": null,
+  "regions": [
+    {
+      "code": "CENTRO",
+      "name": "Región Centro",
+      "states": [
+        {
+          "code": "DC",
+          "name": "Distrito Capital",
+          "municipalities": [
+            {
+              "code": "LIB",
+              "name": "Libertador",
+              "polling_places": [
+                { "code": "MESA-DC-01", "name": "Mesa Libertador 01" },
+                { "code": "MESA-DC-02", "name": "Mesa Libertador 02" }
+              ]
+            }
+          ]
+        },
+        {
+          "code": "MIR",
+          "name": "Miranda",
+          "municipalities": [
+            {
+              "code": "CHA",
+              "name": "Chacao",
+              "polling_places": [
+                { "code": "MESA-MIR-01", "name": "Mesa Chacao 01" }
+              ]
+            },
+            {
+              "code": "BAR",
+              "name": "Baruta",
+              "polling_places": [
+                { "code": "MESA-MIR-02", "name": "Mesa Baruta 01" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "OCCIDENTE",
+      "name": "Región Occidente",
+      "states": [
+        {
+          "code": "ZUL",
+          "name": "Zulia",
+          "municipalities": [
+            {
+              "code": "MAR",
+              "name": "Maracaibo",
+              "polling_places": [
+                { "code": "MESA-ZUL-01", "name": "Mesa Maracaibo 01" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "ORIENTE",
+      "name": "Región Oriente",
+      "states": [
+        {
+          "code": "ANZ",
+          "name": "Anzoátegui",
+          "municipalities": [
+            {
+              "code": "BNA",
+              "name": "Barcelona",
+              "polling_places": [
+                { "code": "MESA-ANZ-01", "name": "Mesa Barcelona 01" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

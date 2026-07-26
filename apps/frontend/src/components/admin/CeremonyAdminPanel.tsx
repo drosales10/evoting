@@ -8,7 +8,7 @@ import {
   type CeremonyBroadcast,
 } from "@/components/ceremony/CeremonyPlayer";
 import { datetimeLocalToUtcIso } from "@/lib/datetime";
-import { formatApiError } from "@/lib/api-error";
+import { notify } from "@/lib/notify";
 
 type AdminBroadcast = CeremonyBroadcast & {
   id: string;
@@ -50,7 +50,6 @@ export function CeremonyAdminPanel({
   electionTitle?: string;
 }) {
   const [broadcast, setBroadcast] = useState<AdminBroadcast | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
     youtube_url: "",
@@ -78,7 +77,7 @@ export function CeremonyAdminPanel({
     }
     if (!response.ok) {
       const payload = (await response.json().catch(() => ({}))) as { detail?: string };
-      setMessage(formatApiError(payload, "No se pudo cargar la transmisión."));
+      notify.apiError(payload, "No se pudo cargar la transmisión.");
       return;
     }
     const data = (await response.json()) as AdminBroadcast;
@@ -94,13 +93,12 @@ export function CeremonyAdminPanel({
   }, [electionId, electionTitle]);
 
   useEffect(() => {
-    void load().catch(() => setMessage("Error de red al cargar la transmisión."));
+    void load().catch(() => notify.error("Error de red al cargar la transmisión."));
   }, [load]);
 
   async function save(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
-    setMessage(null);
     try {
       const response = await fetch(
         `${apiUrl()}/api/v1/admin/elections/${electionId}/broadcast`,
@@ -120,13 +118,13 @@ export function CeremonyAdminPanel({
       );
       const payload = (await response.json()) as AdminBroadcast & { detail?: string };
       if (!response.ok) {
-        setMessage(formatApiError(payload, "No se pudo guardar la transmisión."));
+        notify.apiError(payload, "No se pudo guardar la transmisión.");
         return;
       }
       setBroadcast(payload);
-      setMessage("Transmisión guardada. Ya es visible en el portal cliente (drawer Ceremonia).");
+      notify.success("Transmisión guardada. Ya es visible en el portal cliente (drawer Ceremonia).");
     } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "Error al guardar.");
+      notify.error(error instanceof Error ? error.message : "Error al guardar.");
     } finally {
       setBusy(false);
     }
@@ -134,7 +132,6 @@ export function CeremonyAdminPanel({
 
   async function setStatus(status: string) {
     setBusy(true);
-    setMessage(null);
     try {
       const response = await fetch(
         `${apiUrl()}/api/v1/admin/elections/${electionId}/broadcast/status`,
@@ -147,13 +144,13 @@ export function CeremonyAdminPanel({
       );
       const payload = (await response.json()) as AdminBroadcast & { detail?: string };
       if (!response.ok) {
-        setMessage(formatApiError(payload, "No se pudo cambiar el estado."));
+        notify.apiError(payload, "No se pudo cambiar el estado.");
         return;
       }
       setBroadcast(payload);
-      setMessage(`Estado actualizado: ${statusLabel(status)}.`);
+      notify.success(`Estado actualizado: ${statusLabel(status)}.`);
     } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "Error de red.");
+      notify.error(error instanceof Error ? error.message : "Error de red.");
     } finally {
       setBusy(false);
     }
@@ -161,7 +158,6 @@ export function CeremonyAdminPanel({
 
   async function addMilestone(type: string) {
     setBusy(true);
-    setMessage(null);
     try {
       const response = await fetch(
         `${apiUrl()}/api/v1/admin/elections/${electionId}/broadcast/milestones`,
@@ -174,13 +170,13 @@ export function CeremonyAdminPanel({
       );
       const payload = (await response.json()) as AdminBroadcast & { detail?: string };
       if (!response.ok) {
-        setMessage(formatApiError(payload, "No se pudo registrar el hito."));
+        notify.apiError(payload, "No se pudo registrar el hito.");
         return;
       }
       setBroadcast(payload);
-      setMessage("Hito registrado en la timeline pública.");
+      notify.success("Hito registrado en la timeline pública.");
     } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "Error de red.");
+      notify.error(error instanceof Error ? error.message : "Error de red.");
     } finally {
       setBusy(false);
     }
@@ -332,12 +328,6 @@ export function CeremonyAdminPanel({
           )}
         </div>
       </div>
-
-      {message ? (
-        <p className="rounded-lg bg-[var(--accent)] px-3 py-2 text-sm text-[var(--primary-dark)]">
-          {message}
-        </p>
-      ) : null}
 
       {broadcast ? (
         <div className="rounded-2xl border border-[var(--line)] p-4">

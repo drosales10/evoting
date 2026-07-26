@@ -35,6 +35,13 @@ cp .env.example .env
 # Migraciones
 cd apps/backend && alembic upgrade head
 
+# Seed admin (opcional)
+cd apps/backend && python -m scripts.seed_admin
+
+# Seed territorio N2–N5 (opcional; editar scripts/seed_data/territory.json
+# o exportar desde otro entorno con python -m scripts.export_territory)
+cd apps/backend && python -m scripts.seed_territory
+
 # API
 uvicorn app.main:app --reload --app-dir apps/backend --port 8000
 

@@ -5,6 +5,7 @@ import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { adminFetch } from "@/lib/admin-api";
 import { formatApiError } from "@/lib/api-error";
 import { datetimeLocalToUtcIso, formatAppDateTime } from "@/lib/datetime";
+import { notify } from "@/lib/notify";
 
 type AdminOverview = {
   organization_slug: string;
@@ -283,10 +284,7 @@ export function AdminOverview({
   const [candidates, setCandidates] = useState<AdminCandidate[]>([]);
   const [slateBusy, setSlateBusy] = useState(false);
   const [candidateBusy, setCandidateBusy] = useState(false);
-  const [slateMessage, setSlateMessage] = useState<string | null>(null);
-  const [message, setMessage] = useState("Cargando resumen administrativo…");
-  const [memberMessage, setMemberMessage] = useState<string | null>(null);
-  const [positionMessage, setPositionMessage] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [memberBusy, setMemberBusy] = useState(false);
   const [positionBusy, setPositionBusy] = useState(false);
@@ -335,12 +333,15 @@ export function AdminOverview({
     setOverview(overviewPayload);
     setMembers(Array.isArray(membersPayload) ? membersPayload : membersPayload.items);
     setElections(electionsPayload);
-    setMessage("");
+    setLoadError(null);
   }
 
   useEffect(() => {
     void loadData().catch((error: unknown) => {
-      setMessage(error instanceof Error ? error.message : "No se pudo cargar el resumen administrativo.");
+      const text =
+        error instanceof Error ? error.message : "No se pudo cargar el resumen administrativo.";
+      notify.error(text);
+      setLoadError(text);
     });
   }, []);
 
@@ -368,12 +369,11 @@ export function AdminOverview({
   async function handleImportMembers(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMemberBusy(true);
-    setMemberMessage(null);
     const form = new FormData(event.currentTarget);
     const file = form.get("member_file");
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     if (!(file instanceof File) || file.size === 0) {
-      setMemberMessage("Selecciona un archivo XLSX.");
+      notify.error("Selecciona un archivo XLSX.");
       setMemberBusy(false);
       return;
     }
@@ -387,16 +387,16 @@ export function AdminOverview({
       });
       const payload = (await response.json()) as AdminMemberImportResult & ApiError;
       if (!response.ok) {
-        setMemberMessage(formatApiError(payload, "No se pudo importar el padrón."));
+        notify.apiError(payload, "No se pudo importar el padrón.");
         return;
       }
       await loadData();
-      setMemberMessage(
+      notify.success(
         `${payload.dry_run ? "Validación" : "Importación"} terminada: ${payload.rows_read} filas, ` +
           `${payload.created} nuevas, ${payload.updated} actualizadas y ${payload.failed} con error.`,
       );
     } catch {
-      setMemberMessage("No se pudo contactar la API administrativa.");
+      notify.error("No se pudo contactar la API administrativa.");
     } finally {
       setMemberBusy(false);
     }
@@ -407,7 +407,6 @@ export function AdminOverview({
     const file = inputElement.files?.[0];
     if (!file) return;
     setPhotoBusyId(memberId);
-    setMemberMessage(null);
     const form = new FormData();
     form.append("file", file);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -420,13 +419,13 @@ export function AdminOverview({
       });
       const payload = (await response.json()) as AdminMember & ApiError;
       if (!response.ok) {
-        setMemberMessage(formatApiError(payload, "No se pudo cargar la foto."));
+        notify.apiError(payload, "No se pudo cargar la foto.");
         return;
       }
       setMembers((current) => current.map((member) => member.id === memberId ? payload : member));
-      setMemberMessage("Foto guardada en PostgreSQL.");
+      notify.success("Foto guardada en PostgreSQL.");
     } catch {
-      setMemberMessage("No se pudo contactar la API administrativa.");
+      notify.error("No se pudo contactar la API administrativa.");
     } finally {
       setPhotoBusyId(null);
       inputElement.value = "";
@@ -436,7 +435,6 @@ export function AdminOverview({
   async function handleCreateMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMemberBusy(true);
-    setMemberMessage(null);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -455,7 +453,7 @@ export function AdminOverview({
       });
       const payload = (await response.json()) as AdminMember & ApiError;
       if (!response.ok) {
-        setMemberMessage(formatApiError(payload, "No se pudo crear el miembro."));
+        notify.apiError(payload, "No se pudo crear el miembro.");
         return;
       }
       setMembers((current) => [...current, payload].sort((left, right) =>
@@ -471,9 +469,9 @@ export function AdminOverview({
           : current,
       );
       formElement.reset();
-      setMemberMessage("Miembro agregado al padrón activo.");
+      notify.success("Miembro agregado al padrón activo.");
     } catch {
-      setMemberMessage("No se pudo contactar la API administrativa.");
+      notify.error("No se pudo contactar la API administrativa.");
     } finally {
       setMemberBusy(false);
     }
@@ -482,7 +480,6 @@ export function AdminOverview({
   async function handleCreateElection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
-    setMessage("");
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const startTime = String(form.get("start_time") ?? "");
@@ -507,7 +504,7 @@ export function AdminOverview({
       });
       const payload = (await response.json()) as AdminElection & ApiError;
       if (!response.ok) {
-        setMessage(formatApiError(payload, "No se pudo crear la elección."));
+        notify.apiError(payload, "No se pudo crear la elección.");
         return;
       }
       setElections((current) => [...current, payload].sort((left, right) =>
@@ -517,9 +514,9 @@ export function AdminOverview({
         current ? { ...current, election_count: current.election_count + 1 } : current,
       );
       formElement.reset();
-      setMessage("Elección creada en estado DRAFT.");
+      notify.success("Elección creada en estado DRAFT.");
     } catch {
-      setMessage("No se pudo contactar la API administrativa.");
+      notify.error("No se pudo contactar la API administrativa.");
     } finally {
       setBusy(false);
     }
@@ -530,7 +527,6 @@ export function AdminOverview({
     action: "open-registration" | "freeze",
   ) {
     setLifecycleBusyId(election.id);
-    setMessage("");
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     try {
       const response = await fetch(
@@ -539,7 +535,7 @@ export function AdminOverview({
       );
       const payload = (await response.json()) as AdminElectionEligibility & ApiError;
       if (!response.ok) {
-        setMessage(formatApiError(payload, "No se pudo cambiar el estado de la elección."));
+        notify.apiError(payload, "No se pudo cambiar el estado de la elección.");
         return;
       }
       setElections((current) => current.map((item) =>
@@ -551,12 +547,12 @@ export function AdminOverview({
       if (slateElection?.id === election.id) {
         setSlateElection({ ...slateElection, status: payload.election_status });
       }
-      setMessage(
+      notify.success(
         `${action === "open-registration" ? "Registro abierto" : "Padrón congelado"}. ` +
         `${payload.eligible_member_count} elegibles de ${payload.snapshot_member_count}.`,
       );
     } catch {
-      setMessage("No se pudo contactar la API administrativa.");
+      notify.error("No se pudo contactar la API administrativa.");
     } finally {
       setLifecycleBusyId(null);
     }
@@ -564,11 +560,10 @@ export function AdminOverview({
 
   async function handleCloseElection(election: AdminElection, forcePilot: boolean) {
     setLifecycleBusyId(election.id);
-    setMessage("");
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     const csrfToken = window.sessionStorage.getItem("evoting_admin_csrf");
     if (!csrfToken) {
-      setMessage("Sesión ADMIN sin CSRF. Inicia sesión nuevamente.");
+      notify.error("Sesión ADMIN sin CSRF. Inicia sesión nuevamente.");
       setLifecycleBusyId(null);
       return;
     }
@@ -596,13 +591,13 @@ export function AdminOverview({
       if (selectedElection?.id === election.id) {
         setSelectedElection({ ...selectedElection, status: payload.election_status });
       }
-      setMessage(
+      notify.success(
         `${forcePilot ? "Piloto" : "Elección"} cerrada: ${payload.ballot_count} boletas y ${payload.voted_member_count} participaciones. ` +
         `Quórum: ${payload.quorum_met ? "cumplido" : `no cumplido (${payload.quorum_required} requeridos)`}. ` +
         "El escrutinio requiere la clave privada fuera de la API.",
       );
     } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "No se pudo cerrar la elección.");
+      notify.error(error instanceof Error ? error.message : "No se pudo cerrar la elección.");
     } finally {
       setLifecycleBusyId(null);
     }
@@ -614,7 +609,6 @@ export function AdminOverview({
   ) {
     event.preventDefault();
     setActivationBusyId(election.id);
-    setMessage("");
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const publicKey = String(form.get("election_public_key") ?? "").trim();
@@ -622,7 +616,7 @@ export function AdminOverview({
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     const csrfToken = window.sessionStorage.getItem("evoting_admin_csrf");
     if (!csrfToken) {
-      setMessage("Sesión ADMIN sin CSRF. Inicia sesión nuevamente.");
+      notify.error("Sesión ADMIN sin CSRF. Inicia sesión nuevamente.");
       setActivationBusyId(null);
       return;
     }
@@ -662,13 +656,13 @@ export function AdminOverview({
         });
       }
       formElement.reset();
-      setMessage(
+      notify.success(
         `Votación activa: ${payload.slate_count} planchas, ${payload.candidate_count} candidatos y ` +
         `${payload.eligible_member_count} electores elegibles. Huella de clave pública: ` +
         `${payload.public_key_sha256.slice(0, 16)}…`,
       );
     } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "No se pudo activar la elección.");
+      notify.error(error instanceof Error ? error.message : "No se pudo activar la elección.");
     } finally {
       setActivationBusyId(null);
     }
@@ -692,14 +686,13 @@ export function AdminOverview({
     const rawArtifact = String(form.get("tally_artifact") ?? "").trim();
     const pilotOverride = form.get("tally_pilot_override") === "on";
     setTallyBusyId(election.id);
-    setMessage("");
     setTallyFeedback(null);
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     const csrfToken = window.sessionStorage.getItem("evoting_admin_csrf");
     if (!csrfToken) {
       const text = "Sesión ADMIN sin CSRF. Inicia sesión nuevamente.";
-      setMessage(text);
+      notify.error(text);
       setTallyFeedback({ electionId: election.id, kind: "error", text });
       setTallyBusyId(null);
       return;
@@ -790,12 +783,12 @@ export function AdminOverview({
             `Resultado ${payload.pilot_override ? "de piloto" : "oficial"}; ` +
             `huella del artefacto ${payload.artifact_sha256.slice(0, 16)}…` +
             (payload.acta_sha256 ? ` Acta ${payload.acta_sha256.slice(0, 16)}…` : "");
-      setMessage(okText);
+      notify.success(okText);
       setTallyFeedback({ electionId: election.id, kind: "ok", text: okText });
     } catch (error: unknown) {
       const text =
         error instanceof Error ? error.message : "No se pudo publicar el tally.";
-      setMessage(text);
+      notify.error(text);
       setTallyFeedback({ electionId: election.id, kind: "error", text });
     } finally {
       setTallyBusyId(null);
@@ -814,7 +807,7 @@ export function AdminOverview({
       setAuditEvents(payload);
     } catch (error: unknown) {
       setAuditEvents([]);
-      setMessage(error instanceof Error ? error.message : "No se pudo cargar la auditoría.");
+      notify.error(error instanceof Error ? error.message : "No se pudo cargar la auditoría.");
     } finally {
       setAuditBusy(false);
     }
@@ -835,14 +828,14 @@ export function AdminOverview({
       );
       const payload = (await response.json()) as AdminElectionEligibilityMember[] & ApiError;
       if (!response.ok) {
-        setMessage(formatApiError(payload, "No se pudo cargar el detalle de elegibilidad."));
+        notify.apiError(payload, "No se pudo cargar el detalle de elegibilidad.");
         setEligibilityMembers([]);
         return;
       }
       setEligibilityMembers(payload);
       setEligibilityPage(1);
     } catch {
-      setMessage("No se pudo contactar la API administrativa.");
+      notify.error("No se pudo contactar la API administrativa.");
       setEligibilityMembers([]);
       setEligibilityPage(1);
     } finally {
@@ -872,7 +865,6 @@ export function AdminOverview({
     setSlateElection(election);
     setSelectedSlate(null);
     setCandidates([]);
-    setSlateMessage(null);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     try {
       const payload = await requestApiJson<AdminSlate[]>(
@@ -882,7 +874,7 @@ export function AdminOverview({
       setSlates(payload);
       void loadPositions(election);
     } catch (error: unknown) {
-      setSlateMessage(
+      notify.error(
         error instanceof Error ? error.message : "No se pudieron cargar las planchas.",
       );
       setSlates([]);
@@ -891,7 +883,6 @@ export function AdminOverview({
 
   async function loadCandidates(slate: AdminSlate) {
     setSelectedSlate(slate);
-    setSlateMessage(null);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     try {
       const payload = await requestApiJson<AdminCandidate[]>(
@@ -900,7 +891,7 @@ export function AdminOverview({
       );
       setCandidates(payload);
     } catch (error: unknown) {
-      setSlateMessage(
+      notify.error(
         error instanceof Error ? error.message : "No se pudieron cargar los candidatos.",
       );
       setCandidates([]);
@@ -911,7 +902,6 @@ export function AdminOverview({
     event.preventDefault();
     if (!slateElection) return;
     setSlateBusy(true);
-    setSlateMessage(null);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -932,9 +922,9 @@ export function AdminOverview({
       );
       setSlates((current) => [...current, payload]);
       formElement.reset();
-      setSlateMessage("Plancha creada en estado PENDING.");
+      notify.success("Plancha creada en estado PENDING.");
     } catch (error: unknown) {
-      setSlateMessage(
+      notify.error(
         error instanceof Error ? error.message : "No se pudo crear la plancha.",
       );
     } finally {
@@ -946,7 +936,6 @@ export function AdminOverview({
     event.preventDefault();
     if (!selectedSlate) return;
     setCandidateBusy(true);
-    setSlateMessage(null);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -972,9 +961,9 @@ export function AdminOverview({
       ));
       setSelectedSlate((current) => current ? { ...current, candidate_count: current.candidate_count + 1 } : current);
       formElement.reset();
-      setSlateMessage("Candidato registrado correctamente.");
+      notify.success("Candidato registrado correctamente.");
     } catch (error: unknown) {
-      setSlateMessage(
+      notify.error(
         error instanceof Error ? error.message : "No se pudo registrar el candidato.",
       );
     } finally {
@@ -984,7 +973,6 @@ export function AdminOverview({
 
   async function loadPositions(election: AdminElection) {
     setSelectedElection(election);
-    setPositionMessage(null);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     try {
       const payload = await requestApiJson<AdminPosition[]>(
@@ -993,7 +981,7 @@ export function AdminOverview({
       );
       setPositions(payload);
     } catch (error: unknown) {
-      setPositionMessage(
+      notify.error(
         error instanceof Error ? error.message : "No se pudieron cargar las posiciones.",
       );
     }
@@ -1003,7 +991,6 @@ export function AdminOverview({
     event.preventDefault();
     if (!selectedElection) return;
     setPositionBusy(true);
-    setPositionMessage(null);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -1025,23 +1012,23 @@ export function AdminOverview({
       );
       const payload = (await response.json()) as AdminPosition & ApiError;
       if (!response.ok) {
-        setPositionMessage(formatApiError(payload, "No se pudo crear la posición."));
+        notify.apiError(payload, "No se pudo crear la posición.");
         return;
       }
       setPositions((current) => [...current, payload].sort(
         (left, right) => left.display_order - right.display_order,
       ));
       formElement.reset();
-      setPositionMessage("Posición creada correctamente.");
+      notify.success("Posición creada correctamente.");
     } catch {
-      setPositionMessage("No se pudo contactar la API administrativa.");
+      notify.error("No se pudo contactar la API administrativa.");
     } finally {
       setPositionBusy(false);
     }
   }
 
   if (!overview) {
-    return <div className="notice"><p>{message}</p></div>;
+    return <div className="notice"><p>{loadError ?? "Cargando resumen administrativo…"}</p></div>;
   }
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -1225,7 +1212,6 @@ export function AdminOverview({
             {memberBusy ? "Agregando…" : "Agregar al padrón"}
           </button>
         </form>
-        {memberMessage ? <p className="form-message" role="status">{memberMessage}</p> : null}
         {members.length === 0 ? (
           <div className="empty-state"><p>No hay miembros registrados.</p></div>
         ) : (
@@ -1272,7 +1258,6 @@ export function AdminOverview({
           <input id="election-state-id" name="state_id" placeholder="Opcional salvo alcance estatal" />
           <button className="button button-primary" type="submit" disabled={busy}>{busy ? "Creando…" : "Crear elección DRAFT"}</button>
         </form>
-        {message ? <p className="form-message" role="status">{message}</p> : null}
       </section>
       ) : null}
       {showElectionList ? (
@@ -1287,7 +1272,6 @@ export function AdminOverview({
               ? "Registro → escrutinio"
               : "Elecciones registradas"}
         </h2>
-        {message && isElectionsFocus ? <p className="form-message" role="status">{message}</p> : null}
         {visibleElections.length === 0 ? (
           <div className="empty-state">
             <p>
@@ -1834,7 +1818,6 @@ export function AdminOverview({
                       La elección está congelada: solo lectura de candidatos.
                     </p>
                   )}
-                  {slateMessage ? <p className="form-message" role="status">{slateMessage}</p> : null}
                 </div>
               ) : null}
             </div>
@@ -1968,11 +1951,6 @@ export function AdminOverview({
               ) : null}
             </div>
           ) : null}
-          {slateMessage && electionsTab !== "elegibles" ? (
-            <p className="form-message" role="status">
-              {slateMessage}
-            </p>
-          ) : null}
         </section>
       ) : null}
 
@@ -2085,7 +2063,6 @@ export function AdminOverview({
               <button className="button button-primary" type="submit" disabled={positionBusy}>{positionBusy ? "Creando…" : "Agregar posición"}</button>
             </form>
           ) : null}
-          {positionMessage ? <p className="form-message" role="status">{positionMessage}</p> : null}
         </section>
       ) : null}
     </>

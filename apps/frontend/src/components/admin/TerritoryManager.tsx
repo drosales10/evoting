@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
-import { formatApiError } from "@/lib/api-error";
+import { notify } from "@/lib/notify";
 
 type Unit = {
   id: string;
@@ -20,7 +20,6 @@ export function TerritoryManager() {
   const [states, setStates] = useState<Unit[]>([]);
   const [municipalities, setMunicipalities] = useState<Unit[]>([]);
   const [pollingPlaces, setPollingPlaces] = useState<Unit[]>([]);
-  const [message, setMessage] = useState<string | null>(null);
   const [regionForm, setRegionForm] = useState({ code: "", name: "" });
   const [stateForm, setStateForm] = useState({ code: "", name: "", parent_id: "" });
   const [muniForm, setMuniForm] = useState({ code: "", name: "", parent_id: "" });
@@ -57,11 +56,11 @@ export function TerritoryManager() {
     });
     if (!response.ok) {
       const payload = (await response.json()) as { detail?: string };
-      setMessage(formatApiError(payload, `No se pudo crear (${path}).`));
+      notify.apiError(payload, `No se pudo crear (${path}).`);
       return;
     }
     reset();
-    setMessage(okMessage);
+    notify.success(okMessage);
     await load();
   }
 
@@ -74,7 +73,6 @@ export function TerritoryManager() {
             N1 es la organización. Administra N2 Región → N3 Estado → N4 Municipio → N5 Mesa.
           </p>
         </div>
-        {message ? <p className="rounded-lg bg-[var(--accent)] px-3 py-2 text-sm">{message}</p> : null}
 
         <form
           className="grid gap-3 md:grid-cols-3"

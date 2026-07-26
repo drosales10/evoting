@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Fraunces, Source_Sans_3 } from "next/font/google";
 import type { ReactNode } from "react";
 
+import { AppToaster } from "@/components/ui/app-toaster";
+
 import "./globals.css";
 
 const display = Fraunces({
@@ -22,7 +24,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="es" className={`${display.variable} ${sans.variable}`}>
-      <body className="min-h-screen font-sans antialiased">{children}</body>
+      <body className="min-h-screen font-sans antialiased">
+        {children}
+        <AppToaster />
+      </body>
     </html>
   );
 }
