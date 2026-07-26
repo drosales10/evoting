@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.auth.dependencies import require_voter
 from app.auth.tokens import AccessClaims
@@ -55,6 +56,8 @@ class VoterCandidateResponse(BaseModel):
     position_code: str
     position_title: str
     member_full_name: str
+    has_photo: bool = False
+    photo_url: str | None = None
 
 
 class VoterSlateResponse(BaseModel):
@@ -63,6 +66,7 @@ class VoterSlateResponse(BaseModel):
     id: UUID
     name: str
     slogan: str | None
+    logo_url: str | None = None
     candidates: list[VoterCandidateResponse]
 
 
@@ -197,6 +201,7 @@ async def get_voter_election(
         (
             await session.execute(
                 select(Candidate, Position, Member)
+                .options(defer(Member.photo_data))
                 .join(Position, Position.id == Candidate.position_id)
                 .join(Member, Member.id == Candidate.member_id)
                 .where(
@@ -214,6 +219,21 @@ async def get_voter_election(
         slate.id: [] for slate in slates
     }
     for candidate, position, member in candidate_rows:
+        external_photo = (candidate.photo_url or "").strip() or None
+        member_has_photo = bool(member.photo_sha256 or member.photo_content_type)
+        if external_photo and (
+            external_photo.startswith("https://") or external_photo.startswith("http://")
+        ):
+            photo_url: str | None = external_photo
+            has_photo = True
+        elif member_has_photo:
+            photo_url = (
+                f"/api/v1/voter/elections/{election.id}/candidates/{candidate.id}/photo"
+            )
+            has_photo = True
+        else:
+            photo_url = None
+            has_photo = False
         candidates_by_slate[candidate.slate_id].append(
             VoterCandidateResponse(
                 id=candidate.id,
@@ -221,6 +241,8 @@ async def get_voter_election(
                 position_code=position.code,
                 position_title=position.title,
                 member_full_name=member.full_name,
+                has_photo=has_photo,
+                photo_url=photo_url,
             )
         )
     public_key = election.public_key
@@ -246,10 +268,60 @@ async def get_voter_election(
                 id=slate.id,
                 name=slate.name,
                 slogan=slate.slogan,
+                logo_url=slate.logo_url,
                 candidates=candidates_by_slate[slate.id],
             )
             for slate in slates
         ],
+    )
+
+
+@router.get("/elections/{election_id}/candidates/{candidate_id}/photo")
+async def get_voter_candidate_photo(
+    election_id: UUID,
+    candidate_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(require_voter)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> Response:
+    """Serve a candidate member photo to an eligible voter for an active election."""
+    response.headers["Cache-Control"] = "private, max-age=300"
+    election = await _get_active_election(session, election_id, claims)
+    eligibility = await session.scalar(
+        select(MemberElectionStatus).where(
+            MemberElectionStatus.election_id == election.id,
+            MemberElectionStatus.organization_id == claims.org_id,
+            MemberElectionStatus.member_id == claims.sub,
+        )
+    )
+    if eligibility is None or not eligibility.eligible:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Voter is not eligible for this election",
+        )
+
+    row = (
+        await session.execute(
+            select(Candidate, Member)
+            .join(Member, Member.id == Candidate.member_id)
+            .join(Slate, Slate.id == Candidate.slate_id)
+            .where(
+                Candidate.id == candidate_id,
+                Slate.election_id == election.id,
+                Slate.organization_id == claims.org_id,
+                Member.organization_id == claims.org_id,
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+    _candidate, member = row
+    if not member.photo_data or not member.photo_content_type:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+    return Response(
+        content=member.photo_data,
+        media_type=member.photo_content_type,
+        headers={"Cache-Control": "private, max-age=300"},
     )
 
 

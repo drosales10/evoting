@@ -12,12 +12,15 @@ type VoterCandidate = {
   position_code: string;
   position_title: string;
   member_full_name: string;
+  has_photo?: boolean;
+  photo_url?: string | null;
 };
 
 type VoterSlate = {
   id: string;
   name: string;
   slogan: string | null;
+  logo_url?: string | null;
   candidates: VoterCandidate[];
 };
 
@@ -48,6 +51,37 @@ type BallotBlocker =
   | "not_authorized"
   | "already_voted"
   | null;
+
+const CANDIDATE_PLACEHOLDER = "/images/candidate-placeholder.svg";
+
+function candidatePhotoSrc(apiUrl: string, candidate: VoterCandidate): string {
+  const url = candidate.photo_url?.trim();
+  if (!url) return CANDIDATE_PLACEHOLDER;
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  return `${apiUrl}${url.startsWith("/") ? url : `/${url}`}`;
+}
+
+function CandidatePhoto({
+  apiUrl,
+  candidate,
+}: {
+  apiUrl: string;
+  candidate: VoterCandidate;
+}) {
+  const [src, setSrc] = useState(() => candidatePhotoSrc(apiUrl, candidate));
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- blob/API cookie auth; static placeholder fallback
+    <img
+      className="ballot-candidate-photo"
+      src={src}
+      alt=""
+      width={48}
+      height={60}
+      loading="lazy"
+      onError={() => setSrc(CANDIDATE_PLACEHOLDER)}
+    />
+  );
+}
 
 function toBase64(value: ArrayBuffer | Uint8Array): string {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
@@ -428,6 +462,7 @@ export function VoterBallot() {
                 </span>
                 {election.slates.map((slate) => {
                   const selected = selectedSlate === slate.id;
+                  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
                   return (
                     <label
                       key={slate.id}
@@ -438,11 +473,23 @@ export function VoterBallot() {
                         <p className="ballot-slate-card__slogan">{slate.slogan ?? "Sin lema"}</p>
                         <ul className="ballot-slate-card__candidates">
                           {slate.candidates.length === 0 ? (
-                            <li>Sin candidatos registrados</li>
+                            <li className="ballot-candidate-empty">Sin candidatos registrados</li>
                           ) : (
                             slate.candidates.map((candidate) => (
-                              <li key={candidate.id}>
-                                {candidate.position_title} — {candidate.member_full_name}
+                              <li key={candidate.id} className="ballot-candidate-row">
+                                <CandidatePhoto
+                                  key={candidate.id}
+                                  apiUrl={apiUrl}
+                                  candidate={candidate}
+                                />
+                                <div className="ballot-candidate-meta">
+                                  <span className="ballot-candidate-role">
+                                    {candidate.position_title}
+                                  </span>
+                                  <span className="ballot-candidate-name">
+                                    {candidate.member_full_name}
+                                  </span>
+                                </div>
                               </li>
                             ))
                           )}
