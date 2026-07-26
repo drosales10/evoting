@@ -29,11 +29,12 @@ module.exports = {
       name: "evoting-web",
       cwd: `${APP_ROOT}/apps/frontend`,
       script: "node_modules/next/dist/bin/next",
-      args: "start -H 127.0.0.1 -p 3000",
+      // 3000 suele estar ocupado por otras apps del droplet (p. ej. denny-nextjs)
+      args: "start -H 127.0.0.1 -p 3001",
       interpreter: "node",
       env: {
         NODE_ENV: "production",
-        PORT: "3000",
+        PORT: "3001",
       },
       max_memory_restart: "512M",
       time: true,

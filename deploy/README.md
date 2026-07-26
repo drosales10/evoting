@@ -55,7 +55,7 @@ sudo bash deploy/scripts/setup-server.sh
 
 ```bash
 sudo -u postgres psql <<'SQL'
-CREATE USER evoting WITH PASSWORD 'CAMBIAR_PASSWORD_FUERTE';
+CREATE USER evoting WITH PASSWORD 'Pal095ckX,.';
 CREATE DATABASE evoting OWNER evoting;
 \c evoting
 CREATE EXTENSION IF NOT EXISTS postgis;
