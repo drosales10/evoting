@@ -296,7 +296,7 @@ async def get_public_receipt(
 
     ballot, election = match
     qr_payload = ballot.qr_payload or (
-        f"{settings.app_public_url.rstrip('/')}/recibo/{ballot.receipt_hash}"
+        f"{settings.app_public_url.rstrip('/')}/r/{ballot.receipt_hash}"
     )
     return PublicReceiptResponse(
         exists=True,

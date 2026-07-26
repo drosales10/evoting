@@ -562,7 +562,7 @@ async def cast_voter_ballot(
 
     recorded_at = datetime.now(UTC)
     receipt_hash = payload.receipt_hash.lower()
-    qr_payload = f"{settings.app_public_url.rstrip('/')}/recibo/{receipt_hash}"
+    qr_payload = f"{settings.app_public_url.rstrip('/')}/r/{receipt_hash}"
     ballot = EncryptedBallot(
         organization_id=claims.org_id,
         election_id=election.id,
