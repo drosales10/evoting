@@ -21,12 +21,6 @@ const surfaces = [
     href: "/vote/login",
     audience: "Elector",
   },
-  {
-    title: "Comisión electoral",
-    description: "Padrón, territorio N1–N5, ciclo electoral y geovisor administrativo.",
-    href: "/admin",
-    audience: "Comisión",
-  },
 ];
 
 export default function HomePage() {
@@ -40,20 +34,20 @@ export default function HomePage() {
           Elecciones digitales con confianza verificable.
         </h1>
         <p className="mt-5 max-w-2xl text-lg text-[var(--muted)]">
-          Superficies separadas para comisión, electores y consulta pública, con territorio por
-          región, estado y mesa.
+          Consulta pública, área ciudadana y emisión de voto cifrado, con territorio por región,
+          estado y mesa.
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
           <Link className="btn btn-primary" href="/cliente">
             Entrar al área cliente
           </Link>
-          <Link className="btn btn-secondary" href="/admin">
-            Ir a comisión
+          <Link className="btn btn-secondary" href="/vote/login">
+            Acceso del elector
           </Link>
         </div>
       </section>
 
-      <section className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Superficies">
+      <section className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Superficies">
         {surfaces.map((surface) => (
           <SurfaceCard key={surface.href} {...surface} />
         ))}
