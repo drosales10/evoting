@@ -3,6 +3,7 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { adminFetch } from "@/lib/admin-api";
+import { formatApiError } from "@/lib/api-error";
 import { datetimeLocalToUtcIso, formatAppDateTime } from "@/lib/datetime";
 
 type AdminOverview = {
@@ -174,45 +175,7 @@ type AdminPosition = {
   created_at: string;
 };
 
-type ApiError = { detail?: string };
-
-type ApiValidationIssue = {
-  loc?: unknown;
-  msg?: unknown;
-};
-
-function apiErrorDetail(payload: unknown): string | null {
-  if (typeof payload !== "object" || payload === null || !("detail" in payload)) {
-    return null;
-  }
-  const detail = (payload as { detail?: unknown }).detail;
-  if (typeof detail === "string" && detail.trim()) {
-    return detail;
-  }
-  if (!Array.isArray(detail)) {
-    return null;
-  }
-  const messages = detail.flatMap((issue: unknown) => {
-    if (typeof issue === "string" && issue.trim()) {
-      return [issue];
-    }
-    if (typeof issue !== "object" || issue === null) {
-      return [];
-    }
-    const validationIssue = issue as ApiValidationIssue;
-    const message = typeof validationIssue.msg === "string" ? validationIssue.msg : null;
-    if (!message) {
-      return [];
-    }
-    const location = Array.isArray(validationIssue.loc)
-      ? validationIssue.loc.filter((part): part is string | number =>
-          typeof part === "string" || typeof part === "number",
-        ).join(".")
-      : "respuesta";
-    return [`${location}: ${message}`];
-  });
-  return messages.length > 0 ? messages.join("; ") : null;
-}
+type ApiError = { detail?: unknown };
 
 async function requestApiJson<T>(url: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
@@ -240,7 +203,7 @@ async function requestApiJson<T>(url: string, init: RequestInit = {}): Promise<T
   }
 
   if (!response.ok) {
-    const detail = apiErrorDetail(payload);
+    const detail = formatApiError(payload, "");
     if (response.status === 401) {
       throw new Error(
         detail
@@ -249,7 +212,7 @@ async function requestApiJson<T>(url: string, init: RequestInit = {}): Promise<T
       );
     }
     throw new Error(
-      `La API administrativa respondió HTTP ${response.status}: ${detail ?? "sin detalle"}.`,
+      `La API administrativa respondió HTTP ${response.status}: ${detail || "sin detalle"}.`,
     );
   }
 
@@ -359,12 +322,14 @@ export function AdminOverview({
         (response) => response.status === 401,
       );
       const membersDetail =
-        "detail" in membersPayload ? membersPayload.detail : undefined;
+        "detail" in membersPayload ? formatApiError(membersPayload, "") : "";
       throw new Error(
         unauthorized
           ? "Tu sesión administrativa no está activa. Accede para continuar."
-          : overviewPayload.detail ?? membersDetail ?? electionsPayload.detail ??
-            "No se pudo cargar el resumen administrativo.",
+          : formatApiError(overviewPayload, "") ||
+              membersDetail ||
+              formatApiError(electionsPayload, "") ||
+              "No se pudo cargar el resumen administrativo.",
       );
     }
     setOverview(overviewPayload);
@@ -422,7 +387,7 @@ export function AdminOverview({
       });
       const payload = (await response.json()) as AdminMemberImportResult & ApiError;
       if (!response.ok) {
-        setMemberMessage(payload.detail ?? "No se pudo importar el padrón.");
+        setMemberMessage(formatApiError(payload, "No se pudo importar el padrón."));
         return;
       }
       await loadData();
@@ -455,7 +420,7 @@ export function AdminOverview({
       });
       const payload = (await response.json()) as AdminMember & ApiError;
       if (!response.ok) {
-        setMemberMessage(payload.detail ?? "No se pudo cargar la foto.");
+        setMemberMessage(formatApiError(payload, "No se pudo cargar la foto."));
         return;
       }
       setMembers((current) => current.map((member) => member.id === memberId ? payload : member));
@@ -490,7 +455,7 @@ export function AdminOverview({
       });
       const payload = (await response.json()) as AdminMember & ApiError;
       if (!response.ok) {
-        setMemberMessage(payload.detail ?? "No se pudo crear el miembro.");
+        setMemberMessage(formatApiError(payload, "No se pudo crear el miembro."));
         return;
       }
       setMembers((current) => [...current, payload].sort((left, right) =>
@@ -542,7 +507,7 @@ export function AdminOverview({
       });
       const payload = (await response.json()) as AdminElection & ApiError;
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo crear la elección.");
+        setMessage(formatApiError(payload, "No se pudo crear la elección."));
         return;
       }
       setElections((current) => [...current, payload].sort((left, right) =>
@@ -574,7 +539,7 @@ export function AdminOverview({
       );
       const payload = (await response.json()) as AdminElectionEligibility & ApiError;
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo cambiar el estado de la elección.");
+        setMessage(formatApiError(payload, "No se pudo cambiar el estado de la elección."));
         return;
       }
       setElections((current) => current.map((item) =>
@@ -870,7 +835,7 @@ export function AdminOverview({
       );
       const payload = (await response.json()) as AdminElectionEligibilityMember[] & ApiError;
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo cargar el detalle de elegibilidad.");
+        setMessage(formatApiError(payload, "No se pudo cargar el detalle de elegibilidad."));
         setEligibilityMembers([]);
         return;
       }
@@ -1060,7 +1025,7 @@ export function AdminOverview({
       );
       const payload = (await response.json()) as AdminPosition & ApiError;
       if (!response.ok) {
-        setPositionMessage(payload.detail ?? "No se pudo crear la posición.");
+        setPositionMessage(formatApiError(payload, "No se pudo crear la posición."));
         return;
       }
       setPositions((current) => [...current, payload].sort(

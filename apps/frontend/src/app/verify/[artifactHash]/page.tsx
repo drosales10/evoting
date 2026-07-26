@@ -3,6 +3,8 @@
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { formatApiError } from "@/lib/api-error";
+
 type VerifyPayload = {
   artifact_hash: string;
   election_id: string;
@@ -31,7 +33,7 @@ export default function VerifyArtifactPage() {
       .then(async (response) => {
         const payload = (await response.json()) as VerifyPayload;
         if (!response.ok) {
-          setError(payload.detail ?? "No se pudo verificar el artefacto.");
+          setError(formatApiError(payload, "No se pudo verificar el artefacto."));
           return;
         }
         setData(payload);

@@ -2,6 +2,8 @@
 
 import { useState, type FormEvent } from "react";
 
+import { formatHttpApiError } from "@/lib/api-error";
+
 type RealmLoginFormProps = {
   realm: "ADMIN" | "VOTER";
   identifierLabel: string;
@@ -14,6 +16,14 @@ type AdminCredentials = {
   email: string;
   password: string;
 };
+
+async function readJsonPayload(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
 
 export function RealmLoginForm({
   realm,
@@ -43,18 +53,28 @@ export function RealmLoginForm({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ organization_slug: organizationSlug, identifier }),
         });
-        const payload = (await response.json()) as {
-          message?: string;
-          detail?: string;
-          challenge_id?: string | null;
-        };
+        const payload = await readJsonPayload(response);
         if (!response.ok) {
-          setMessage(payload.detail ?? "No fue posible solicitar el OTP.");
-        } else if (payload.challenge_id) {
-          setVoterChallengeId(payload.challenge_id);
+          setMessage(
+            formatHttpApiError(response.status, payload, "No fue posible solicitar el OTP."),
+          );
+        } else if (
+          typeof payload === "object" &&
+          payload !== null &&
+          "challenge_id" in payload &&
+          typeof (payload as { challenge_id?: unknown }).challenge_id === "string"
+        ) {
+          setVoterChallengeId((payload as { challenge_id: string }).challenge_id);
           setMessage("Solicitud aceptada. Introduce el código OTP de desarrollo.");
         } else {
-          setMessage(payload.message ?? "Si el elector es elegible, recibirá un OTP.");
+          const successMessage =
+            typeof payload === "object" &&
+            payload !== null &&
+            "message" in payload &&
+            typeof (payload as { message?: unknown }).message === "string"
+              ? (payload as { message: string }).message
+              : "Si el elector es elegible, recibirá un OTP.";
+          setMessage(successMessage);
         }
         return;
       }
@@ -71,19 +91,27 @@ export function RealmLoginForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(credentials),
       });
-      const payload = (await response.json()) as {
-        status?: string;
-        detail?: string;
-        csrf_token?: string;
-      };
+      const payload = await readJsonPayload(response);
       if (!response.ok) {
-        setMessage(payload.detail ?? "No fue posible iniciar sesión.");
-      } else if (payload.status === "MFA_REQUIRED") {
+        setMessage(
+          formatHttpApiError(response.status, payload, "No fue posible iniciar sesión."),
+        );
+      } else if (
+        typeof payload === "object" &&
+        payload !== null &&
+        (payload as { status?: string }).status === "MFA_REQUIRED"
+      ) {
         setMfaCredentials(credentials);
         setMessage("Credenciales correctas. Introduce el código de tu autenticador.");
       } else {
-        if (payload.csrf_token) {
-          window.sessionStorage.setItem("evoting_admin_csrf", payload.csrf_token);
+        const csrf =
+          typeof payload === "object" &&
+          payload !== null &&
+          typeof (payload as { csrf_token?: unknown }).csrf_token === "string"
+            ? (payload as { csrf_token: string }).csrf_token
+            : null;
+        if (csrf) {
+          window.sessionStorage.setItem("evoting_admin_csrf", csrf);
         }
         setMessage("Sesión administrativa iniciada.");
         window.location.assign("/admin");
@@ -112,16 +140,22 @@ export function RealmLoginForm({
           code: String(form.get("code") ?? ""),
         }),
       });
-      const payload = (await response.json()) as { csrf_token?: string; detail?: string };
+      const payload = await readJsonPayload(response);
       if (!response.ok) {
-        setMessage(payload.detail ?? "El código OTP no es válido.");
+        setMessage(formatHttpApiError(response.status, payload, "El código OTP no es válido."));
         return;
       }
-      if (!payload.csrf_token) {
+      const csrf =
+        typeof payload === "object" &&
+        payload !== null &&
+        typeof (payload as { csrf_token?: unknown }).csrf_token === "string"
+          ? (payload as { csrf_token: string }).csrf_token
+          : null;
+      if (!csrf) {
         setMessage("La sesión VOTER no devolvió protección CSRF.");
         return;
       }
-      window.sessionStorage.setItem("evoting_voter_csrf", payload.csrf_token);
+      window.sessionStorage.setItem("evoting_voter_csrf", csrf);
       window.location.assign("/vote");
     } catch {
       setMessage("No se pudo contactar la API de autenticación.");
@@ -145,16 +179,20 @@ export function RealmLoginForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...mfaCredentials, code: String(form.get("code") ?? "") }),
       });
-      const payload = (await response.json()) as {
-        status?: string;
-        detail?: string;
-        csrf_token?: string;
-      };
+      const payload = await readJsonPayload(response);
       if (!response.ok) {
-        setMessage(payload.detail ?? "El código MFA no es válido.");
-      } else if (payload.status === "AUTHENTICATED") {
-        if (payload.csrf_token) {
-          window.sessionStorage.setItem("evoting_admin_csrf", payload.csrf_token);
+        setMessage(formatHttpApiError(response.status, payload, "El código MFA no es válido."));
+      } else if (
+        typeof payload === "object" &&
+        payload !== null &&
+        (payload as { status?: string }).status === "AUTHENTICATED"
+      ) {
+        const csrf =
+          typeof (payload as { csrf_token?: unknown }).csrf_token === "string"
+            ? (payload as { csrf_token: string }).csrf_token
+            : null;
+        if (csrf) {
+          window.sessionStorage.setItem("evoting_admin_csrf", csrf);
         }
         setMessage("Sesión administrativa iniciada.");
         window.location.assign("/admin");

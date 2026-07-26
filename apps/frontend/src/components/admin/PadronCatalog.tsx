@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
+import { formatApiError } from "@/lib/api-error";
 
 type Member = {
   id: string;
@@ -213,7 +214,7 @@ export function PadronCatalog() {
       });
       const payload = (await response.json()) as MemberList & { detail?: string };
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo cargar el padrón.");
+        setMessage(formatApiError(payload, "No se pudo cargar el padrón."));
         return;
       }
       setData(payload);
@@ -317,7 +318,7 @@ export function PadronCatalog() {
       });
       const payload = (await response.json()) as { detail?: string };
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo crear el miembro.");
+        setMessage(formatApiError(payload, "No se pudo crear el miembro."));
         return;
       }
       setForm(emptyForm());
@@ -337,7 +338,7 @@ export function PadronCatalog() {
       });
       const payload = (await response.json()) as Member & { detail?: string };
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo cargar el miembro.");
+        setMessage(formatApiError(payload, "No se pudo cargar el miembro."));
         return;
       }
       setSelected(payload);
@@ -368,7 +369,7 @@ export function PadronCatalog() {
       });
       const payload = (await response.json()) as Member & { detail?: string };
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo actualizar el miembro.");
+        setMessage(formatApiError(payload, "No se pudo actualizar el miembro."));
         return;
       }
       setSelected(payload);
@@ -394,7 +395,7 @@ export function PadronCatalog() {
       });
       if (!response.ok) {
         const payload = (await response.json().catch(() => ({}))) as { detail?: string };
-        setMessage(payload.detail ?? "No se pudo eliminar el miembro.");
+        setMessage(formatApiError(payload, "No se pudo eliminar el miembro."));
         return;
       }
       if (selected?.id === member.id) closePanel();
@@ -418,7 +419,7 @@ export function PadronCatalog() {
       });
       const payload = (await response.json()) as Member & { detail?: string };
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo cargar la foto.");
+        setMessage(formatApiError(payload, "No se pudo cargar la foto."));
         return;
       }
       setSelected(payload);
@@ -447,7 +448,7 @@ export function PadronCatalog() {
         detail?: string;
       };
       if (!response.ok) {
-        setMessage(payload.detail ?? "Importación fallida.");
+        setMessage(formatApiError(payload, "Importación fallida."));
         return;
       }
       setMessage(

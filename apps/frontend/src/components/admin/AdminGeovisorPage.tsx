@@ -6,6 +6,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import type { FeatureCollection } from "geojson";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
+import { formatApiError } from "@/lib/api-error";
 
 const AdminMapCanvas = dynamic(
   () => import("@/components/admin/geovisor/AdminMapCanvas").then((m) => m.AdminMapCanvas),
@@ -167,8 +168,8 @@ function AdminGeovisorInner() {
       },
     );
     if (!response.ok) {
-      const err = (await response.json()) as { detail?: string };
-      setMessage(err.detail ?? "No se pudo importar el GeoJSON.");
+      const err = await response.json().catch(() => null);
+      setMessage(formatApiError(err, "No se pudo importar el GeoJSON."));
       return;
     }
     setMessage(`GeoJSON importado en ${importTarget.level}.`);

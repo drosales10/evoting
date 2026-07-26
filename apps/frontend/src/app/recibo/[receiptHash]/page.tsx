@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { APP_TIMEZONE, formatAppDateTime } from "@/lib/datetime";
+import { formatApiError } from "@/lib/api-error";
 
 type PublicReceiptPayload = {
   exists: boolean;
@@ -50,7 +51,7 @@ export default function PublicReciboPage() {
           return;
         }
         if (!response.ok) {
-          setError(payload.detail ?? "No se pudo consultar el recibo.");
+          setError(formatApiError(payload, "No se pudo consultar el recibo."));
           return;
         }
         setData(payload);

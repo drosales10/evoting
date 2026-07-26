@@ -8,6 +8,7 @@ import {
   type CeremonyBroadcast,
 } from "@/components/ceremony/CeremonyPlayer";
 import { datetimeLocalToUtcIso } from "@/lib/datetime";
+import { formatApiError } from "@/lib/api-error";
 
 type AdminBroadcast = CeremonyBroadcast & {
   id: string;
@@ -77,7 +78,7 @@ export function CeremonyAdminPanel({
     }
     if (!response.ok) {
       const payload = (await response.json().catch(() => ({}))) as { detail?: string };
-      setMessage(payload.detail ?? "No se pudo cargar la transmisión.");
+      setMessage(formatApiError(payload, "No se pudo cargar la transmisión."));
       return;
     }
     const data = (await response.json()) as AdminBroadcast;
@@ -119,7 +120,7 @@ export function CeremonyAdminPanel({
       );
       const payload = (await response.json()) as AdminBroadcast & { detail?: string };
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo guardar la transmisión.");
+        setMessage(formatApiError(payload, "No se pudo guardar la transmisión."));
         return;
       }
       setBroadcast(payload);
@@ -146,7 +147,7 @@ export function CeremonyAdminPanel({
       );
       const payload = (await response.json()) as AdminBroadcast & { detail?: string };
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo cambiar el estado.");
+        setMessage(formatApiError(payload, "No se pudo cambiar el estado."));
         return;
       }
       setBroadcast(payload);
@@ -173,7 +174,7 @@ export function CeremonyAdminPanel({
       );
       const payload = (await response.json()) as AdminBroadcast & { detail?: string };
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo registrar el hito.");
+        setMessage(formatApiError(payload, "No se pudo registrar el hito."));
         return;
       }
       setBroadcast(payload);

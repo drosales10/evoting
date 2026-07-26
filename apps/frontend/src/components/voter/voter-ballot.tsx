@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 
 import { VoterBallotReceipt } from "@/components/voter/voter-ballot-receipt";
+import { formatApiDetail, formatApiError } from "@/lib/api-error";
 
 type VoterCandidate = {
   id: string;
@@ -121,8 +122,9 @@ async function encryptSelection(
   };
 }
 
-function mapLoadError(status: number, detail?: string): { blocker: BallotBlocker; message: string } {
-  const normalized = (detail ?? "").toLowerCase();
+function mapLoadError(status: number, detail?: unknown): { blocker: BallotBlocker; message: string } {
+  const detailText = formatApiDetail(detail) ?? "";
+  const normalized = detailText.toLowerCase();
   if (status === 403 || normalized.includes("not eligible") || normalized.includes("autoriz")) {
     return {
       blocker: "not_authorized",
@@ -147,7 +149,7 @@ function mapLoadError(status: number, detail?: string): { blocker: BallotBlocker
   }
   return {
     blocker: null,
-    message: detail ?? "No se pudo cargar la elección.",
+    message: detailText || "No se pudo cargar la elección.",
   };
 }
 
@@ -248,7 +250,7 @@ export function VoterBallot() {
       if (!issuanceResponse.ok || !issuancePayload.issuance_token) {
         const mapped = mapLoadError(issuanceResponse.status, issuancePayload.detail);
         if (mapped.blocker) setBlocker(mapped.blocker);
-        setMessage(mapped.message || (issuancePayload.detail ?? "No se pudo emitir el token de un solo uso."));
+        setMessage(mapped.message || formatApiError(issuancePayload, "No se pudo emitir el token de un solo uso."));
         return;
       }
       const zkpProof = election.zkp_verification_enabled
@@ -278,7 +280,7 @@ export function VoterBallot() {
       if (!response.ok) {
         const mapped = mapLoadError(response.status, payload.detail);
         if (mapped.blocker) setBlocker(mapped.blocker);
-        setMessage(mapped.message || (payload.detail ?? "No se pudo registrar el voto."));
+        setMessage(mapped.message || formatApiError(payload, "No se pudo registrar el voto."));
         return;
       }
       setReceipt(payload);

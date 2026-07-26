@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
+import { formatApiError } from "@/lib/api-error";
 
 type MemberTypeCount = {
   member_type: string;
@@ -38,7 +39,7 @@ export default function AdminHomePage() {
           setError(
             response.status === 401
               ? "Sesión administrativa inactiva. Accede en /admin/login."
-              : payload.detail ?? "No se pudo cargar el resumen.",
+              : formatApiError(payload, "No se pudo cargar el resumen."),
           );
           return;
         }

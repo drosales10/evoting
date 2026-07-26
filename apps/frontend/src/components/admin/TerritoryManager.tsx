@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
+import { formatApiError } from "@/lib/api-error";
 
 type Unit = {
   id: string;
@@ -56,7 +57,7 @@ export function TerritoryManager() {
     });
     if (!response.ok) {
       const payload = (await response.json()) as { detail?: string };
-      setMessage(payload.detail ?? `No se pudo crear (${path}).`);
+      setMessage(formatApiError(payload, `No se pudo crear (${path}).`));
       return;
     }
     reset();

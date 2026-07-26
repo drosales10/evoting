@@ -11,6 +11,7 @@ import {
   type ElectionsTab,
 } from "@/components/admin/admin-overview";
 import { datetimeLocalToUtcIso, formatAppDateTime } from "@/lib/datetime";
+import { formatApiError } from "@/lib/api-error";
 
 type TerritoryUnit = { id: string; code: string; name: string; parent_id?: string | null };
 type Election = {
@@ -243,7 +244,7 @@ export function ElectionsManager() {
       });
       const payload = (await response.json()) as Election & { detail?: string };
       if (!response.ok) {
-        setMessage(payload.detail ?? "No se pudo crear la elección.");
+        setMessage(formatApiError(payload, "No se pudo crear la elección."));
         return;
       }
       setMessage(`Elección creada con alcance ${payload.scope_level ?? scope}.`);
