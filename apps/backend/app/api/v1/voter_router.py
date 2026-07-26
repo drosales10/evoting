@@ -150,6 +150,92 @@ async def _get_active_election(
     return election
 
 
+async def _require_eligible_voter(
+    session: AsyncSession,
+    *,
+    election: Election,
+    claims: AccessClaims,
+    repair_org: bool = False,
+) -> MemberElectionStatus:
+    """Load MES by election+member; election is already scoped to claims.org_id."""
+    eligibility = await session.scalar(
+        select(MemberElectionStatus).where(
+            MemberElectionStatus.election_id == election.id,
+            MemberElectionStatus.member_id == claims.sub,
+        )
+    )
+    if eligibility is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Voter has no eligibility snapshot for this election",
+        )
+    if not eligibility.eligible:
+        reason = eligibility.eligibility_reason
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Voter is not eligible for this election"
+                + (f": {reason}" if reason else "")
+            ),
+        )
+    if repair_org and eligibility.organization_id != claims.org_id:
+        eligibility.organization_id = claims.org_id
+        await session.commit()
+    return eligibility
+
+
+class VoterElectionSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    election_id: UUID
+    title: str
+    status: str
+    start_time: datetime
+    end_time: datetime
+    has_voted: bool
+
+
+@router.get("/elections", response_model=list[VoterElectionSummary])
+async def list_voter_elections(
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(require_voter)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> list[VoterElectionSummary]:
+    """List ACTIVE elections where the authenticated voter is eligible."""
+    response.headers["Cache-Control"] = "no-store"
+    now = datetime.now(UTC)
+    rows = (
+        await session.execute(
+            select(Election, MemberElectionStatus.has_voted)
+            .join(
+                MemberElectionStatus,
+                (MemberElectionStatus.election_id == Election.id)
+                & (MemberElectionStatus.member_id == claims.sub)
+                & (MemberElectionStatus.eligible.is_(True)),
+            )
+            .where(
+                Election.organization_id == claims.org_id,
+                Election.status == "ACTIVE",
+                Election.start_time <= now,
+                Election.end_time > now,
+                Election.public_key.is_not(None),
+            )
+            .order_by(Election.start_time.asc())
+        )
+    ).all()
+    return [
+        VoterElectionSummary(
+            election_id=election.id,
+            title=election.title,
+            status=election.status,
+            start_time=election.start_time,
+            end_time=election.end_time,
+            has_voted=has_voted,
+        )
+        for election, has_voted in rows
+    ]
+
+
 @router.get(
     "/elections/{election_id}",
     response_model=VoterElectionResponse,
@@ -163,18 +249,9 @@ async def get_voter_election(
     """Return the public ballot contract for the authenticated eligible voter."""
     response.headers["Cache-Control"] = "no-store"
     election = await _get_active_election(session, election_id, claims)
-    eligibility = await session.scalar(
-        select(MemberElectionStatus).where(
-            MemberElectionStatus.election_id == election.id,
-            MemberElectionStatus.organization_id == claims.org_id,
-            MemberElectionStatus.member_id == claims.sub,
-        )
+    eligibility = await _require_eligible_voter(
+        session, election=election, claims=claims, repair_org=True
     )
-    if eligibility is None or not eligibility.eligible:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Voter is not eligible for this election",
-        )
 
     positions = list(
         (
@@ -287,18 +364,7 @@ async def get_voter_candidate_photo(
     """Serve a candidate member photo to an eligible voter for an active election."""
     response.headers["Cache-Control"] = "private, max-age=300"
     election = await _get_active_election(session, election_id, claims)
-    eligibility = await session.scalar(
-        select(MemberElectionStatus).where(
-            MemberElectionStatus.election_id == election.id,
-            MemberElectionStatus.organization_id == claims.org_id,
-            MemberElectionStatus.member_id == claims.sub,
-        )
-    )
-    if eligibility is None or not eligibility.eligible:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Voter is not eligible for this election",
-        )
+    await _require_eligible_voter(session, election=election, claims=claims)
 
     row = (
         await session.execute(
@@ -341,18 +407,7 @@ async def issue_ballot_token(
     response.headers["Cache-Control"] = "no-store"
     await require_csrf(session, claims, csrf_token, realm="VOTER")
     election = await _get_active_election(session, election_id, claims)
-    eligibility = await session.scalar(
-        select(MemberElectionStatus).where(
-            MemberElectionStatus.election_id == election.id,
-            MemberElectionStatus.organization_id == claims.org_id,
-            MemberElectionStatus.member_id == claims.sub,
-        )
-    )
-    if eligibility is None or not eligibility.eligible:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Voter is not eligible for this election",
-        )
+    eligibility = await _require_eligible_voter(session, election=election, claims=claims)
     if eligibility.has_voted:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -453,15 +508,23 @@ async def cast_voter_ballot(
         select(MemberElectionStatus)
         .where(
             MemberElectionStatus.election_id == election.id,
-            MemberElectionStatus.organization_id == claims.org_id,
             MemberElectionStatus.member_id == claims.sub,
         )
         .with_for_update()
     )
-    if eligibility is None or not eligibility.eligible:
+    if eligibility is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Voter is not eligible for this election",
+            detail="Voter has no eligibility snapshot for this election",
+        )
+    if not eligibility.eligible:
+        reason = eligibility.eligibility_reason
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Voter is not eligible for this election"
+                + (f": {reason}" if reason else "")
+            ),
         )
     if eligibility.has_voted:
         raise HTTPException(

@@ -5,6 +5,7 @@ import { useEffect, useId, useState } from "react";
 
 import { VoterBallotReceipt } from "@/components/voter/voter-ballot-receipt";
 import { formatApiDetail, formatApiError } from "@/lib/api-error";
+import { getVoterCsrfToken, voterFetch } from "@/lib/voter-api";
 
 type VoterCandidate = {
   id: string;
@@ -22,6 +23,15 @@ type VoterSlate = {
   slogan: string | null;
   logo_url?: string | null;
   candidates: VoterCandidate[];
+};
+
+type VoterElectionSummary = {
+  election_id: string;
+  title: string;
+  status: string;
+  start_time: string;
+  end_time: string;
+  has_voted: boolean;
 };
 
 type VoterElection = {
@@ -159,10 +169,23 @@ async function encryptSelection(
 function mapLoadError(status: number, detail?: unknown): { blocker: BallotBlocker; message: string } {
   const detailText = formatApiDetail(detail) ?? "";
   const normalized = detailText.toLowerCase();
-  if (status === 403 || normalized.includes("not eligible") || normalized.includes("autoriz")) {
+  if (status === 401) {
     return {
       blocker: "not_authorized",
-      message: "No tiene autorización para votar en esta elección.",
+      message: "Sesión VOTER expirada. Vuelve a iniciar sesión en /vote/login.",
+    };
+  }
+  if (
+    status === 403 ||
+    normalized.includes("not eligible") ||
+    normalized.includes("no eligibility") ||
+    normalized.includes("autoriz")
+  ) {
+    return {
+      blocker: "not_authorized",
+      message:
+        detailText ||
+        "No tiene autorización para votar en esta elección (no está en el padrón elegible).",
     };
   }
   if (
@@ -203,6 +226,7 @@ function blockerCopy(blocker: BallotBlocker): string | null {
 export function VoterBallot() {
   const slateGroupId = useId();
   const [electionId, setElectionId] = useState("");
+  const [availableElections, setAvailableElections] = useState<VoterElectionSummary[]>([]);
   const [election, setElection] = useState<VoterElection | null>(null);
   const [selectedSlate, setSelectedSlate] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -217,6 +241,26 @@ export function VoterBallot() {
     setSessionChecked(true);
   }, []);
 
+  useEffect(() => {
+    if (!voterSessionReady) return;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    void (async () => {
+      try {
+        const response = await voterFetch(`${apiBase}/api/v1/voter/elections`, {
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const payload = (await response.json()) as VoterElectionSummary[];
+        setAvailableElections(payload);
+        if (payload.length === 1) {
+          setElectionId(payload[0].election_id);
+        }
+      } catch {
+        /* listado opcional */
+      }
+    })();
+  }, [voterSessionReady]);
+
   const canEmit =
     Boolean(election) &&
     Boolean(selectedSlate) &&
@@ -225,7 +269,9 @@ export function VoterBallot() {
     !election?.has_voted &&
     blocker === null;
 
-  async function loadElection() {
+  async function loadElection(targetId?: string) {
+    const id = (targetId ?? electionId).trim();
+    if (!id) return;
     setBusy(true);
     setMessage(null);
     setReceipt(null);
@@ -233,9 +279,8 @@ export function VoterBallot() {
     setSelectedSlate("");
     setElection(null);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-      const response = await fetch(`${apiUrl}/api/v1/voter/elections/${electionId.trim()}`, {
-        credentials: "include",
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const response = await voterFetch(`${apiBase}/api/v1/voter/elections/${id}`, {
         cache: "no-store",
       });
       const payload = (await response.json()) as VoterElection & { detail?: string };
@@ -245,6 +290,7 @@ export function VoterBallot() {
         setMessage(mapped.message);
         return;
       }
+      setElectionId(id);
       setElection(payload);
       if (payload.has_voted) {
         setBlocker("already_voted");
@@ -263,17 +309,16 @@ export function VoterBallot() {
     setMessage(null);
     try {
       const encrypted = await encryptSelection(election, selectedSlate);
-      const csrfToken = window.sessionStorage.getItem("evoting_voter_csrf");
+      const csrfToken = getVoterCsrfToken();
       if (!csrfToken) {
         setMessage("La sesión VOTER no tiene protección CSRF. Inicia sesión nuevamente.");
         return;
       }
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-      const issuanceResponse = await fetch(
-        `${apiUrl}/api/v1/voter/elections/${election.election_id}/issuance-token`,
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const issuanceResponse = await voterFetch(
+        `${apiBase}/api/v1/voter/elections/${election.election_id}/issuance-token`,
         {
           method: "POST",
-          credentials: "include",
           headers: { "X-CSRF-Token": csrfToken },
         },
       );
@@ -295,21 +340,23 @@ export function VoterBallot() {
             election.slate_set_hash,
           )
         : `development-pilot-proof-${encrypted.receiptHash}`;
-      const response = await fetch(`${apiUrl}/api/v1/voter/elections/${election.election_id}/ballots`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRF-Token": csrfToken,
+      const response = await voterFetch(
+        `${apiBase}/api/v1/voter/elections/${election.election_id}/ballots`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrfToken,
+          },
+          body: JSON.stringify({
+            encrypted_payload: encrypted.encryptedPayload,
+            receipt_hash: encrypted.receiptHash,
+            zkp_proof: zkpProof,
+            key_version: election.key_version,
+            issuance_token: issuancePayload.issuance_token,
+          }),
         },
-        body: JSON.stringify({
-          encrypted_payload: encrypted.encryptedPayload,
-          receipt_hash: encrypted.receiptHash,
-          zkp_proof: zkpProof,
-          key_version: election.key_version,
-          issuance_token: issuancePayload.issuance_token,
-        }),
-      });
+      );
       const payload = (await response.json()) as VoterBallotResponse & { detail?: string };
       if (!response.ok) {
         const mapped = mapLoadError(response.status, payload.detail);
@@ -403,29 +450,49 @@ export function VoterBallot() {
       {!election ? (
         <div className="ballot-load">
           <p className="ballot-muted">
-            Indique el identificador de la elección para cargar la papeleta. Su identidad no forma
-            parte de esta pantalla.
+            Elija una elección en la que esté habilitado para votar. Su identidad no forma parte de
+            esta pantalla.
           </p>
-          <label className="ballot-field-label" htmlFor="voter-election-id">
-            ID de elección
-          </label>
-          <input
-            id="voter-election-id"
-            className="input-field"
-            value={electionId}
-            onChange={(event) => setElectionId(event.target.value)}
-            placeholder="UUID de la elección"
-            autoComplete="off"
-            required
-          />
-          <button
-            className="button button-secondary"
-            type="button"
-            onClick={() => void loadElection()}
-            disabled={busy || !electionId.trim()}
-          >
-            {busy ? "Cargando…" : "Cargar elección"}
-          </button>
+          {availableElections.length > 0 ? (
+            <ul className="ballot-info-list">
+              {availableElections.map((item) => (
+                <li key={item.election_id}>
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void loadElection(item.election_id)}
+                  >
+                    {busy ? "Cargando…" : item.title}
+                    {item.has_voted ? " (ya votó)" : ""}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <>
+              <label className="ballot-field-label" htmlFor="voter-election-id">
+                ID de elección
+              </label>
+              <input
+                id="voter-election-id"
+                className="input-field"
+                value={electionId}
+                onChange={(event) => setElectionId(event.target.value)}
+                placeholder="UUID de la elección"
+                autoComplete="off"
+                required
+              />
+              <button
+                className="button button-secondary"
+                type="button"
+                onClick={() => void loadElection()}
+                disabled={busy || !electionId.trim()}
+              >
+                {busy ? "Cargando…" : "Cargar elección"}
+              </button>
+            </>
+          )}
           {activeBlockerMessage ? (
             <p className="ballot-alert" role="status">
               {activeBlockerMessage}
