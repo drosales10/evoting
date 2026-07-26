@@ -20,6 +20,8 @@ module.exports = {
       interpreter: "none",
       env: {
         NODE_ENV: "production",
+        // Temporal: poner "true" cuando MFA esté operativo de nuevo
+        ADMIN_MFA_REQUIRED: "false",
       },
       max_memory_restart: "512M",
       time: true,

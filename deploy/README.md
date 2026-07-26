@@ -125,7 +125,7 @@ cd /var/www/html/evoting
 bash deploy/scripts/deploy-app.sh
 pm2 status
 curl -fsS http://127.0.0.1:8000/health
-curl -fsS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/
+curl -fsS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3001/
 ```
 
 Seed del primer admin (opcional, con `SEED_ADMIN_*` en `.env`):
