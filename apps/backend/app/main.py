@@ -19,6 +19,7 @@ from app.db.session import dispose_engine, get_engine
 from app.middleware.logging import StructuredLoggingMiddleware
 from app.services.gemini_assistant import probe_gemini
 
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
