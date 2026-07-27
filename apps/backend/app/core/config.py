@@ -49,8 +49,9 @@ class Settings(BaseSettings):
     rate_limit_assistant_per_minute: int = 20
 
     model_config = SettingsConfigDict(
-        env_file=(WORKSPACE_ROOT / ".env", WORKSPACE_ROOT / "apps/backend/.env"),
-        env_file_encoding="utf-8",
+        # Root .env last so workspace secrets override apps/backend/.env placeholders.
+        env_file=(WORKSPACE_ROOT / "apps/backend/.env", WORKSPACE_ROOT / ".env"),
+        env_file_encoding="utf-8-sig",
         case_sensitive=False,
         extra="ignore",
     )
