@@ -11,7 +11,7 @@ Fuera del path de urna: no ve boletas, claves privadas ni padrón.
 GEMINI_ENABLED=true
 GEMINI_API_KEY=tu_api_key
 GEMINI_MODEL_ID=gemini-3.5-flash
-GEMINI_MAX_TOKENS=512
+GEMINI_MAX_TOKENS=1536
 RATE_LIMIT_ASSISTANT_PER_MINUTE=20
 ```
 

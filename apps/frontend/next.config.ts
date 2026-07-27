@@ -47,6 +47,18 @@ if (!process.env.NEXT_PUBLIC_APP_LOCALE && process.env.APP_LOCALE) {
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@evoting/shared"],
+  async rewrites() {
+    const backend = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(
+      /\/$/,
+      "",
+    );
+    // Same-origin /api and /health in local/dev avoid stale NEXT_PUBLIC hosts and CORS mismatches.
+    return [
+      { source: "/api/:path*", destination: `${backend}/api/:path*` },
+      { source: "/health", destination: `${backend}/health` },
+      { source: "/health/:path*", destination: `${backend}/health/:path*` },
+    ];
+  },
 };
 
 export default nextConfig;

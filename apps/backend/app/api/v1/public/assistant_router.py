@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.config import settings
+from app.core.config import get_settings
 from app.services.gemini_assistant import ask_electoral_assistant, gemini_configured, probe_gemini
 from app.services.rate_limit import client_key, rate_limiter
 
@@ -34,15 +34,21 @@ class AssistantPublicStatus(BaseModel):
     gemini_configured: bool
     assistant_available: bool
     model_id: str | None
+    enabled: bool
+    has_api_key: bool
 
 
 @router.get("/status", response_model=AssistantPublicStatus)
 async def assistant_status() -> AssistantPublicStatus:
+    s = get_settings()
+    ready = gemini_configured()
     return AssistantPublicStatus(
         provider="google-gemini",
-        gemini_configured=gemini_configured(),
-        assistant_available=gemini_configured(),
-        model_id=settings.gemini_model_id if gemini_configured() else None,
+        gemini_configured=ready,
+        assistant_available=ready,
+        model_id=s.gemini_model_id if ready else None,
+        enabled=bool(s.gemini_enabled),
+        has_api_key=bool((s.gemini_api_key or "").strip()),
     )
 
 
@@ -64,25 +70,33 @@ async def ask_assistant(
     payload: AssistantAskRequest,
     request: Request,
 ) -> AssistantAskResponse:
+    s = get_settings()
     rate_limiter.hit(
         client_key(request, "assistant-ask"),
-        limit=settings.rate_limit_assistant_per_minute,
+        limit=s.rate_limit_assistant_per_minute,
         window_seconds=60,
     )
     if not gemini_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
-                "Gemini assistant is not configured. "
-                "Set GEMINI_ENABLED=true and GEMINI_API_KEY."
+                "Gemini no configurado en este proceso API "
+                f"(enabled={bool(s.gemini_enabled)}, has_api_key="
+                f"{bool((s.gemini_api_key or '').strip())}). "
+                "Pon GEMINI_ENABLED=true y GEMINI_API_KEY en el .env de la raíz "
+                "y reinicia uvicorn."
             ),
         )
     try:
         result = await ask_electoral_assistant(payload.question)
     except Exception as exc:  # noqa: BLE001
+        message = str(exc).replace("\n", " ").strip()
+        key = (s.gemini_api_key or "").strip()
+        if key:
+            message = message.replace(key, "***")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Gemini request failed: {type(exc).__name__}",
+            detail=f"Gemini request failed ({type(exc).__name__}): {message[:300]}",
         ) from exc
     return AssistantAskResponse(
         answer=result["answer"],

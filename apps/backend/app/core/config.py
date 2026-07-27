@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     gemini_enabled: bool = False
     gemini_api_key: str | None = None
     gemini_model_id: str = "gemini-3.5-flash"
-    gemini_max_tokens: int = 512
+    gemini_max_tokens: int = 1536
     rate_limit_assistant_per_minute: int = 20
 
     model_config = SettingsConfigDict(
