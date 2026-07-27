@@ -15,7 +15,7 @@
 | [04_CHECKLIST_ENTREGA.md](./04_CHECKLIST_ENTREGA.md) | Lista de verificación antes de subir la propuesta |
 | [05_ESTRATEGIA_AWS_KIRO.md](./05_ESTRATEGIA_AWS_KIRO.md) | Cómo maximizar el 10% AWS + Kiro (y plan rápido) |
 | [06_CASOS_DE_USO.md](./06_CASOS_DE_USO.md) | Casos de uso para slides / vídeo |
-| [07_FICHA_ENTREGA.md](./07_FICHA_ENTREGA.md) | Texto listo para pegar en el formulario de entrega |
+| [08_GEMINI_ASISTENTE.md](./08_GEMINI_ASISTENTE.md) | Setup del asistente con Google Gemini 3.5 Flash |
 
 ## Entregables mínimos (reglamento §6)
 

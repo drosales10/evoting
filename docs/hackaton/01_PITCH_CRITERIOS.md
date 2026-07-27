@@ -103,16 +103,13 @@ El proyecto nació y se aceleró con **Kiro**:
 
 Mensaje: *Kiro no fue un autocomplete; fue el sistema de orquestación del producto.*
 
-### AWS (brecha a cerrar o narrar)
+### AWS / IA (criterio 10% y demo IA)
 
-Hoy el piloto corre en DigitalOcean (EC2-equivalente + PostgreSQL).  
-Para el 10%, el jurado busca evidencia en arquitectura. Opciones:
+- **Kiro:** steering + skills (evidencia principal del criterio tooling)
+- **Google Gemini 3.5 Flash:** asistente FAQ en `/cliente/asistente` (fuera de la urna)
+- Health: `/health/ai`
 
-1. **Narrativa + roadmap AWS** (mínimo viable documental) — ver `05_ESTRATEGIA_AWS_KIRO.md`  
-2. **Quick win antes del cierre:** al menos un servicio AWS real (S3 para fotos de candidatos, o Bedrock para asistente electoral, o Amplify hosting)  
-
-Honestidad recomendada: *piloto en droplet; arquitectura diseñada para AWS (EC2/ECS + RDS + S3 + Bedrock).*
-
+> Nota: se intentó cablear Amazon S3/Bedrock; la cuenta AWS quedó bloqueada por verificación de pago. La IA operativa quedó en Gemini.
 ---
 
 ## Estructura narrativa recomendada (orden de persuasión)

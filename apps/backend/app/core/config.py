@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     seed_admin_role: str = "ELECTORAL_JUSTICE"
     # IANA timezone for display/business-day semantics (storage remains UTC).
     app_timezone: str = "America/Caracas"
+    # Google Gemini (optional public FAQ assistant; outside ballot path)
+    gemini_enabled: bool = False
+    gemini_api_key: str | None = None
+    gemini_model_id: str = "gemini-3.5-flash"
+    gemini_max_tokens: int = 512
+    rate_limit_assistant_per_minute: int = 20
 
     model_config = SettingsConfigDict(
         env_file=(WORKSPACE_ROOT / ".env", WORKSPACE_ROOT / "apps/backend/.env"),

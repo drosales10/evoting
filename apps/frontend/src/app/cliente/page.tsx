@@ -58,6 +58,9 @@ export default async function ClienteHomePage() {
           <Link className="btn btn-secondary" href="/cliente/ceremonia">
             Ceremonia
           </Link>
+          <Link className="btn btn-secondary" href="/cliente/asistente">
+            Asistente Gemini
+          </Link>
           <Link className="btn btn-secondary" href="/vote/login">
             Emitir voto
           </Link>

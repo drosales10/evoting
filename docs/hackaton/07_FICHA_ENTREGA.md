@@ -43,13 +43,9 @@ Innovación: desacoplamiento criptográfico urna/padrón, integridad de boleta v
 - Tooling IA: Kiro (steering, agentes, skills)  
 - Cloud: piloto en VPS; mapa AWS EC2/ECS + RDS + S3 (+ Bedrock opcional)  
 
-## Servicios AWS (declarar con honestidad)
+## Servicios de nube / IA (declarar con honestidad)
 
-_Opción 1 — si ya hay servicio real:_  
-`Amazon S3 (medios de candidatos) + arquitectura RDS/EC2 documentada`
-
-_Opción 2 — si solo hay roadmap:_  
-`Arquitectura diseñada para Amazon EC2/ECS, Amazon RDS (PostgreSQL), Amazon S3 y Amazon Bedrock; piloto demostrable en producción equivalente.`
+`Google Gemini 3.5 Flash` (asistente FAQ electoral en /cliente/asistente). Cómputo/DB del piloto en VPS. Desarrollo con **Kiro**. Se exploró AWS (S3/Bedrock) pero la cuenta quedó bloqueada por verificación de pago.
 
 ## Uso de Kiro
 

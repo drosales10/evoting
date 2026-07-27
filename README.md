@@ -34,7 +34,7 @@ Las elecciones internas de gremios, cooperativas y asociaciones suelen depender 
 | DB | PostgreSQL + PostGIS |
 | Workspace | pnpm |
 | IA / agentic | **Kiro** (steering, skills, multiagente) |
-| Cloud | Piloto en VPS; arquitectura objetivo **AWS** (EC2/ECS, RDS, S3, Bedrock) |
+| Cloud | Piloto en VPS · **Google Gemini 3.5 Flash** (asistente FAQ) |
 
 ## Arquitectura (resumen)
 
@@ -105,6 +105,7 @@ Producción (nginx + PM2): ver [deploy/README.md](deploy/README.md).
 | Documento | Contenido |
 |-----------|-----------|
 | [docs/hackaton/00_INDICE.md](docs/hackaton/00_INDICE.md) | **Pack hackathon** (pitch, vídeo, arquitectura, checklist) |
+| [docs/hackaton/08_GEMINI_ASISTENTE.md](docs/hackaton/08_GEMINI_ASISTENTE.md) | Asistente FAQ con **Google Gemini 3.5 Flash** |
 | [deploy/README.md](deploy/README.md) | Droplet, nginx, SSL, dominio `evoting.dennyrosales.com` |
 | [docs/Go_Live_Checklist.md](docs/Go_Live_Checklist.md) | Criterios para elección oficial |
 | [docs/Pilot_Archive.md](docs/Pilot_Archive.md) | Archivar piloto y no publicar votos de prueba |

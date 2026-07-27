@@ -13,6 +13,7 @@ const CLIENT_NAV = [
   { href: "/cliente/ceremonia", label: "Ceremonia" },
   { href: "/cliente/resultados", label: "Resultados" },
   { href: "/cliente/geovisor", label: "Geovisor" },
+  { href: "/cliente/asistente", label: "Asistente" },
   { href: "/vote/login", label: "Votar" },
 ];
 

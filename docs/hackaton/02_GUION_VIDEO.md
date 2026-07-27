@@ -74,17 +74,15 @@
 
 ---
 
-## Minuto 4:15 – 4:50 | Kiro + AWS + stack
+## Minuto 4:15 – 4:50 | Kiro + Gemini + stack
 
-**Pantalla:** diagrama AWS/Kiro o collage: logo Kiro + stack (Next.js, FastAPI, PostgreSQL) + logo AWS roadmap
+**Pantalla:** `/cliente/asistente` (Gemini) + `/health/ai`
 
 **Narración:**
 
-> Construimos el sistema acelerado por **Kiro**: steering de producto, skills de arquitectura admin/cliente y geovisores, y un equipo de agentes especializados en seguridad, datos y UX.  
-> Stack: Next.js 15, FastAPI, PostgreSQL con PostGIS.  
-> En arquitectura, mapeamos el despliegue a servicios AWS — cómputo, RDS, S3 para evidencias/medios y potencial Bedrock para asistencia electoral — manteniendo la clave privada de urna fuera de la nube de aplicación.
-
-*(Si ya tienes un servicio AWS real en vivo, nómbralo aquí con evidencia en pantalla.)*
+> Construimos el sistema acelerado por **Kiro**: steering de producto y skills de arquitectura.  
+> El asistente ciudadano corre con **Google Gemini 3.5 Flash** — fuera de la urna, sin acceso a boletas ni claves.  
+> Stack: Next.js 15, FastAPI, PostgreSQL con PostGIS.
 
 ---
 
