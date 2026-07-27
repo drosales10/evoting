@@ -2,8 +2,6 @@ import Link from "next/link";
 
 import { ElectoralAssistant } from "@/components/client/ElectoralAssistant";
 
-const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
-
 export default function ClienteAsistentePage() {
   return (
     <div className="space-y-6">
