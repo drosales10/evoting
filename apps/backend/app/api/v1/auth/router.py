@@ -46,7 +46,11 @@ from app.models import AuthSession, Member, Organization, VoterOtpChallenge
 from app.repositories.admin_users import AdminUserRecord, AdminUserRepository
 from app.services.audit import append_audit_event
 from app.services.csrf import hash_csrf_token
-from app.services.mailtrap_email import is_mailtrap_configured, send_voter_otp_email
+from app.services.mailtrap_email import (
+    is_deliverable_email,
+    is_mailtrap_configured,
+    send_voter_otp_email,
+)
 from app.services.rate_limit import client_key, rate_limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -480,6 +484,15 @@ async def request_voter_otp(
     recipient = member.email
     if not recipient:
         return OtpAcceptedResponse()
+    deliverable = is_deliverable_email(recipient)
+    if not deliverable:
+        # Identificadores del padrón sin formato email generan hard bounces en Mailtrap.
+        logger.warning(
+            "Skipping OTP email: non-deliverable member address organization=%s",
+            organization.slug,
+        )
+        if not (settings.environment == "development" and settings.voter_test_mode):
+            return OtpAcceptedResponse()
     challenge = VoterOtpChallenge(
         organization_id=organization.id,
         member_id=member.id,
@@ -489,8 +502,10 @@ async def request_voter_otp(
     )
     session.add(challenge)
     await session.commit()
-    delivery_fallback = settings.voter_test_mode and not is_mailtrap_configured()
-    if is_mailtrap_configured():
+    delivery_fallback = settings.voter_test_mode and (
+        not is_mailtrap_configured() or not deliverable
+    )
+    if is_mailtrap_configured() and deliverable:
         try:
             await send_voter_otp_email(recipient, otp_code, challenge.expires_at)
         except Exception as exc:
