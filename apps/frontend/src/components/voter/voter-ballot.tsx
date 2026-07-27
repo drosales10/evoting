@@ -65,8 +65,8 @@ type BallotBlocker =
 
 const CANDIDATE_PLACEHOLDER = "/images/candidate-placeholder.svg";
 
-function resolveCandidatePhotoUrl(apiUrl: string, candidate: VoterCandidate): string | null {
-  const url = candidate.photo_url?.trim();
+function resolveCandidatePhotoUrl(apiUrl: string, photoUrl: string | null | undefined): string | null {
+  const url = photoUrl?.trim();
   if (!url) return null;
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
   return `${apiUrl}${url.startsWith("/") ? url : `/${url}`}`;
@@ -82,11 +82,13 @@ function CandidatePhoto({
   const [src, setSrc] = useState(CANDIDATE_PLACEHOLDER);
   const [open, setOpen] = useState(false);
   const bio = candidate.bio?.trim() || "Sin descripción registrada.";
+  const photoUrl = candidate.photo_url;
+  const candidateId = candidate.id;
 
   useEffect(() => {
     let objectUrl: string | null = null;
     let cancelled = false;
-    const target = resolveCandidatePhotoUrl(apiUrl, candidate);
+    const target = resolveCandidatePhotoUrl(apiUrl, photoUrl);
     if (!target) {
       setSrc(CANDIDATE_PLACEHOLDER);
       return;
@@ -113,7 +115,7 @@ function CandidatePhoto({
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [apiUrl, candidate.id, candidate.photo_url]);
+  }, [apiUrl, candidateId, photoUrl]);
 
   return (
     <div
