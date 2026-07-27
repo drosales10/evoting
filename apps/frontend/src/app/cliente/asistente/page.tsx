@@ -22,22 +22,6 @@ export default function ClienteAsistentePage() {
           <Link className="btn btn-secondary" href="/cliente">
             Volver al inicio
           </Link>
-          <a
-            className="btn btn-secondary"
-            href={`${apiUrl}/health/ai`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Health IA
-          </a>
-          <a
-            className="btn btn-secondary"
-            href={`${apiUrl}/api/v1/public/assistant/status`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Estado Gemini
-          </a>
         </div>
       </section>
 
