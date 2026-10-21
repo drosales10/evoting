@@ -20,8 +20,7 @@ from app.core.config import settings
 from app.db.session import get_db_session
 from app.models import StatuteBallot, StatuteConsultation, StatuteIssuanceToken, StatuteMemberStatus
 from app.services.audit import append_audit_event
-from app.services.ballot_crypto import parse_encrypted_payload
-from app.services.ballot_crypto import BallotCryptoError
+from app.services.ballot_crypto import BallotCryptoError, parse_encrypted_payload
 from app.services.csrf import require_csrf
 from app.services.rate_limit import client_key, rate_limiter
 from app.services.statute_crypto import StatuteCryptoError, verify_statute_proof_at_cast

@@ -5,17 +5,6 @@ from app.models.auth import (
     AuthSession,
     VoterOtpChallenge,
 )
-from app.models.statute import (
-    StatuteArticle,
-    StatuteBallot,
-    StatuteChapter,
-    StatuteConsultation,
-    StatuteIssuanceToken,
-    StatuteMemberStatus,
-    StatuteTally,
-    StatuteTallyProposal,
-    StatuteTitle,
-)
 from app.models.core import (
     AuditLog,
     BallotIssuanceToken,
@@ -34,6 +23,17 @@ from app.models.core import (
     Organization,
     Position,
     Slate,
+)
+from app.models.statute import (
+    StatuteArticle,
+    StatuteBallot,
+    StatuteChapter,
+    StatuteConsultation,
+    StatuteIssuanceToken,
+    StatuteMemberStatus,
+    StatuteTally,
+    StatuteTallyProposal,
+    StatuteTitle,
 )
 
 __all__ = [

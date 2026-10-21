@@ -28,8 +28,15 @@ from cryptography.hazmat.primitives.serialization import (
 from sqlalchemy import func, select
 
 from app.db.session import dispose_engine, get_session_factory
-from app.models import Member, StatuteArticle, StatuteBallot, StatuteChapter, StatuteConsultation
-from app.models import StatuteMemberStatus, StatuteTitle
+from app.models import (
+    Member,
+    StatuteArticle,
+    StatuteBallot,
+    StatuteChapter,
+    StatuteConsultation,
+    StatuteMemberStatus,
+    StatuteTitle,
+)
 from app.services.statute_crypto import (
     StatuteCryptoError,
     decrypt_statute_plaintext,

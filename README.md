@@ -48,6 +48,8 @@ Internet → nginx :443
 
 Ciclo electoral: `DRAFT → REGISTRATION → FREEZE → ACTIVE → CLOSED → TALLIED`.
 
+La consulta de estatutos recorre ese mismo ciclo en tablas propias. La boleta también se cifra en el navegador, y el acta publicada asocia cada respuesta al miembro. Detalle: [docs/Consulta_Estatutos.md](docs/Consulta_Estatutos.md).
+
 Diagramas, casos de uso y guion del vídeo: [`docs/hackaton/`](docs/hackaton/00_INDICE.md).
 
 ## Desarrollado con Kiro
@@ -116,6 +118,7 @@ Producción (nginx + PM2): ver [deploy/README.md](deploy/README.md).
 | [docs/Public_Verification.md](docs/Public_Verification.md) | Verificación independiente `/verify` + CLI |
 | [docs/Production_Ops.md](docs/Production_Ops.md) | Correo, HTTPS, backups, monitoreo |
 | [docs/Ciclo_Electoral_Registro.md](docs/Ciclo_Electoral_Registro.md) | Ciclo de estados y alcance territorial |
+| [docs/Consulta_Estatutos.md](docs/Consulta_Estatutos.md) | Consulta de estatutos: texto, boleta nominal y acta |
 | [docs/Padron_Administrativo.md](docs/Padron_Administrativo.md) | Padrón XLSX (columna Región) |
 | [docs/Territorio_Geovisores.md](docs/Territorio_Geovisores.md) | N1–N5, PostGIS, Leaflet/DeckGL |
 

@@ -84,7 +84,7 @@ class StatuteCreateRequest(BaseModel):
     approval_threshold_pct: Decimal = Field(default=Decimal("50.00"), ge=0, le=100)
 
     @model_validator(mode="after")
-    def validate_schedule(self) -> "StatuteCreateRequest":
+    def validate_schedule(self) -> StatuteCreateRequest:
         _aware(self.start_time, "start_time")
         _aware(self.end_time, "end_time")
         if self.end_time <= self.start_time:
@@ -102,7 +102,7 @@ class StatuteUpdateRequest(BaseModel):
     approval_threshold_pct: Decimal | None = Field(default=None, ge=0, le=100)
 
     @model_validator(mode="after")
-    def validate_schedule(self) -> "StatuteUpdateRequest":
+    def validate_schedule(self) -> StatuteUpdateRequest:
         if self.start_time is not None:
             _aware(self.start_time, "start_time")
         if self.end_time is not None:
@@ -507,7 +507,11 @@ async def update_statute(
     return await _detail(session, consultation)
 
 
-@router.delete("/statutes/{consultation_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+@router.delete(
+    "/statutes/{consultation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
 async def delete_statute(
     consultation_id: UUID,
     response: Response,
