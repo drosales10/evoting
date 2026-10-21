@@ -5,6 +5,7 @@ import { useEffect, useId, useState } from "react";
 
 import { VoterBallotReceipt } from "@/components/voter/voter-ballot-receipt";
 import { formatApiDetail, formatApiError } from "@/lib/api-error";
+import { buildSlateIntegrityProof, randomNonceHex, sealPlaintext } from "@/lib/sealed-ballot";
 import { getVoterCsrfToken, voterFetch } from "@/lib/voter-api";
 
 type VoterCandidate = {
@@ -176,77 +177,14 @@ function CandidatePhoto({
   );
 }
 
-function toBase64(value: ArrayBuffer | Uint8Array): string {
-  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
-}
-
-function toHex(value: ArrayBuffer): string {
-  return Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return toHex(digest);
-}
-
-async function buildIntegrityProof(
-  encryptedPayload: string,
-  slateId: string,
-  nonce: string,
-  slateSetHash: string,
-): Promise<string> {
-  const commitment = await sha256Hex(`${slateId}:${nonce}`);
-  const payloadBinding = await sha256Hex(`${encryptedPayload}:${commitment}`);
-  const proof = JSON.stringify({
-    version: "ballot-integrity-v1",
-    commitment,
-    payload_binding: payloadBinding,
-    slate_set_hash: slateSetHash,
-  });
-  return toBase64(new TextEncoder().encode(proof));
-}
-
 async function encryptSelection(
   election: VoterElection,
   slateId: string,
 ): Promise<{ encryptedPayload: string; receiptHash: string; nonce: string }> {
-  const publicKeyData = election.public_key
-    .replace("-----BEGIN PUBLIC KEY-----", "")
-    .replace("-----END PUBLIC KEY-----", "")
-    .replace(/\s/g, "");
-  const publicKeyBytes = Uint8Array.from(atob(publicKeyData), (character) => character.charCodeAt(0));
-  const publicKey = await crypto.subtle.importKey(
-    "spki",
-    publicKeyBytes.buffer,
-    { name: "RSA-OAEP", hash: "SHA-256" },
-    false,
-    ["encrypt"],
-  );
-  const aesKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const nonceBytes = crypto.getRandomValues(new Uint8Array(16));
-  const nonce = toHex(nonceBytes.buffer);
-  const plaintext = new TextEncoder().encode(JSON.stringify({ slate_id: slateId, nonce }));
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aesKey, plaintext);
-  const rawAesKey = await crypto.subtle.exportKey("raw", aesKey);
-  const wrappedKey = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawAesKey);
-  const encryptedPayload = JSON.stringify({
-    algorithm: "RSA-OAEP-256/AES-256-GCM",
-    wrapped_key: toBase64(wrappedKey),
-    iv: toBase64(iv.buffer),
-    ciphertext: toBase64(ciphertext),
-    key_version: election.key_version,
-  });
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(encryptedPayload));
-  return {
-    encryptedPayload,
-    receiptHash: toHex(digest),
-    nonce,
-  };
+  const nonce = randomNonceHex();
+  const plaintext = JSON.stringify({ slate_id: slateId, nonce });
+  const sealed = await sealPlaintext(election.public_key, plaintext, election.key_version);
+  return { ...sealed, nonce };
 }
 
 function mapLoadError(status: number, detail?: unknown): { blocker: BallotBlocker; message: string } {
@@ -435,7 +373,7 @@ export function VoterBallot() {
 
       // Siempre emitir ballot-integrity-v1. El stub development-pilot-proof-* solo
       // se acepta con ENVIRONMENT=development + VOTER_TEST_MODE (piloto local).
-      const zkpProof = await buildIntegrityProof(
+      const zkpProof = await buildSlateIntegrityProof(
         encrypted.encryptedPayload,
         selectedSlate,
         encrypted.nonce,

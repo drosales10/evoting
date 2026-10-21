@@ -9,11 +9,14 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.v1.admin.broadcast_router import router as broadcast_router
 from app.api.v1.admin.router import router as admin_router
+from app.api.v1.admin.statute_router import router as statute_admin_router
 from app.api.v1.admin.territory_router import router as territory_router
 from app.api.v1.auth.router import router as auth_router
 from app.api.v1.public.assistant_router import router as assistant_router
 from app.api.v1.public.router import router as public_router
+from app.api.v1.public.statute_router import router as statute_public_router
 from app.api.v1.voter_router import router as voter_router
+from app.api.v1.voter_statute_router import router as statute_voter_router
 from app.core.config import settings
 from app.db.session import dispose_engine, get_engine
 from app.middleware.logging import StructuredLoggingMiddleware
@@ -54,12 +57,15 @@ async def enforce_https(request: Request, call_next):  # type: ignore[no-untyped
 
 
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(statute_admin_router, prefix="/api/v1")
 app.include_router(broadcast_router, prefix="/api/v1")
 app.include_router(territory_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(public_router, prefix="/api/v1")
+app.include_router(statute_public_router, prefix="/api/v1")
 app.include_router(assistant_router, prefix="/api/v1")
 app.include_router(voter_router, prefix="/api/v1")
+app.include_router(statute_voter_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["health"])

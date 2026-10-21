@@ -1,4 +1,7 @@
-"""Generate separate RSA keypairs for ballot encryption and tally signing."""
+"""Generate separate RSA keypairs for ballot encryption and tally signing.
+
+The same keypairs activate an election or a statute consultation. The private
+key stays offline and is only used by the local tally script."""
 
 from __future__ import annotations
 

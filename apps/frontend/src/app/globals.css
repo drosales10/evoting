@@ -89,6 +89,14 @@
     @apply rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5;
   }
 
+  @media print {
+    .statute-document,
+    .statute-document * {
+      color: #14213d !important;
+      background: #fff !important;
+    }
+  }
+
   /* Compat: pantallas legacy (login, voto, overview) */
   .page-shell {
     @apply mx-auto min-h-screen max-w-5xl px-4 py-8 md:px-6;

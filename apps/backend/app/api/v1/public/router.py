@@ -13,7 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_db_session, get_session_factory
-from app.models import Election, ElectionBroadcast, ElectionTally, EncryptedBallot
+from app.models import (
+    Election,
+    ElectionBroadcast,
+    ElectionTally,
+    EncryptedBallot,
+    StatuteBallot,
+    StatuteConsultation,
+)
 from app.repositories.elections import PublicElectionRepository
 from app.services.rate_limit import client_key, rate_limiter
 from app.services.tally_artifact import artifact_sha256, verify_artifact
@@ -140,6 +147,7 @@ class PublicReceiptResponse(BaseModel):
     recorded_at: datetime
     qr_payload: str
     status: Literal["ACEPTADO"] = "ACEPTADO"
+    process_kind: Literal["election", "statute"] = "election"
 
 
 def _signing_or_public_pem(election: Election) -> str:
@@ -291,22 +299,46 @@ async def get_public_receipt(
         .limit(1)
     )
     match = row.first()
-    if match is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found")
+    if match is not None:
+        ballot, election = match
+        qr_payload = ballot.qr_payload or (
+            f"{settings.app_public_url.rstrip('/')}/r/{ballot.receipt_hash}"
+        )
+        return PublicReceiptResponse(
+            exists=True,
+            receipt_hash=ballot.receipt_hash,
+            ballot_id=ballot.id,
+            election_id=election.id,
+            election_title=election.title,
+            election_status=election.status,
+            recorded_at=ballot.created_at,
+            qr_payload=qr_payload,
+            process_kind="election",
+        )
 
-    ballot, election = match
-    qr_payload = ballot.qr_payload or (
-        f"{settings.app_public_url.rstrip('/')}/r/{ballot.receipt_hash}"
+    statute_row = await session.execute(
+        select(StatuteBallot, StatuteConsultation)
+        .join(StatuteConsultation, StatuteConsultation.id == StatuteBallot.consultation_id)
+        .where(StatuteBallot.receipt_hash == normalized)
+        .limit(1)
+    )
+    statute_match = statute_row.first()
+    if statute_match is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found")
+    statute_ballot, consultation = statute_match
+    qr_payload = statute_ballot.qr_payload or (
+        f"{settings.app_public_url.rstrip('/')}/r/{statute_ballot.receipt_hash}"
     )
     return PublicReceiptResponse(
         exists=True,
-        receipt_hash=ballot.receipt_hash,
-        ballot_id=ballot.id,
-        election_id=election.id,
-        election_title=election.title,
-        election_status=election.status,
-        recorded_at=ballot.created_at,
+        receipt_hash=statute_ballot.receipt_hash,
+        ballot_id=statute_ballot.id,
+        election_id=consultation.id,
+        election_title=consultation.title,
+        election_status=consultation.status,
+        recorded_at=statute_ballot.created_at,
         qr_payload=qr_payload,
+        process_kind="statute",
     )
 
 

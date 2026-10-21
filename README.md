@@ -93,7 +93,9 @@ cd apps/backend && python -m scripts.seed_territory
 uvicorn app.main:app --reload --app-dir apps/backend --port 8000
 
 # UI
-pnpm dev:frontend
+pnpm dev:frontend 
+# o
+pnpm --filter @evoting/frontend dev
 ```
 
 Con Docker: `docker compose up --build` (ver `docker-compose.yml`).

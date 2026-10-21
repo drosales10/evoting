@@ -12,6 +12,8 @@ export type BallotReceiptData = {
   recordedAt: string;
   keyVersion?: string;
   qrPayload?: string | null;
+  subjectLabel?: string;
+  referenceLabel?: string;
 };
 
 function shortRef(value: string, size = 8): string {
@@ -172,11 +174,11 @@ export function VoterBallotReceipt({ receipt }: VoterBallotReceiptProps) {
 
         <dl className="ballot-fiscal-ticket__rows">
           <div className="ballot-fiscal-ticket__row">
-            <dt>Elección</dt>
+            <dt>{receipt.subjectLabel ?? "Elección"}</dt>
             <dd>{receipt.electionTitle}</dd>
           </div>
           <div className="ballot-fiscal-ticket__row">
-            <dt>Ref. elección</dt>
+            <dt>{receipt.referenceLabel ?? "Ref. elección"}</dt>
             <dd>{electionRef}</dd>
           </div>
           <div className="ballot-fiscal-ticket__row">

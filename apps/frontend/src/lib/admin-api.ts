@@ -2,6 +2,8 @@
  * Helpers de autenticación ADMIN (cookies HttpOnly + CSRF en sessionStorage).
  */
 
+import { sameOriginApi, unreachableApiResponse } from "@/lib/api-origin";
+
 const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type RefreshPayload = {
@@ -17,7 +19,7 @@ export async function refreshAdminSession(): Promise<boolean> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     try {
-      const response = await fetch(`${apiUrl()}/api/v1/auth/admin/refresh`, {
+      const response = await fetch(sameOriginApi(`${apiUrl()}/api/v1/auth/admin/refresh`), {
         method: "POST",
         credentials: "include",
         cache: "no-store",
@@ -52,11 +54,16 @@ export async function adminFetch(input: string, init: RequestInit = {}): Promise
     headers.set("X-CSRF-Token", csrf);
   }
 
-  const first = await fetch(input, {
-    ...init,
-    credentials: "include",
-    headers,
-  });
+  let first: Response;
+  try {
+    first = await fetch(sameOriginApi(input), {
+      ...init,
+      credentials: "include",
+      headers,
+    });
+  } catch {
+    return unreachableApiResponse();
+  }
 
   if (first.status !== 401) return first;
 
@@ -69,9 +76,13 @@ export async function adminFetch(input: string, init: RequestInit = {}): Promise
     retryHeaders.set("X-CSRF-Token", nextCsrf);
   }
 
-  return fetch(input, {
-    ...init,
-    credentials: "include",
-    headers: retryHeaders,
-  });
+  try {
+    return await fetch(sameOriginApi(input), {
+      ...init,
+      credentials: "include",
+      headers: retryHeaders,
+    });
+  } catch {
+    return unreachableApiResponse();
+  }
 }
