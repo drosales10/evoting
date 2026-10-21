@@ -4,13 +4,13 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 
+import { clientApiBase as apiUrl } from "@/lib/api-origin";
 import {
   CeremonyPlayer,
   statusLabel,
   type CeremonyBroadcast,
 } from "@/components/ceremony/CeremonyPlayer";
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type ElectionSummary = {
   id: string;

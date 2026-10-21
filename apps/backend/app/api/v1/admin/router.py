@@ -1,4 +1,5 @@
 import hashlib
+import re
 from datetime import UTC, date, datetime
 from decimal import ROUND_CEILING, Decimal
 from io import BytesIO
@@ -80,6 +81,17 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 ELECTION_MANAGER_ROLES = frozenset({"SUPER_ADMIN", "ELECTORAL_JUSTICE"})
 MEMBER_MANAGER_ROLES = frozenset({"SUPER_ADMIN", "ELECTORAL_JUSTICE"})
 ElectionStatus = Literal["DRAFT", "REGISTRATION", "FREEZE", "ACTIVE", "CLOSED", "TALLIED"]
+MENTION_SEPARATOR = re.compile(r"[;\n|]+")
+
+
+def _normalize_mentions(value: str | None) -> str | None:
+    """Store several career mentions, one per line. `;` and `|` are also accepted."""
+    if value is None:
+        return None
+    parts = [part.strip() for part in MENTION_SEPARATOR.split(value) if part.strip()]
+    if not parts:
+        return None
+    return "\n".join(parts)
 
 
 class MemberTypeCount(BaseModel):
@@ -124,7 +136,8 @@ class AdminMemberCreateRequest(BaseModel):
     section: str | None = Field(default=None, max_length=120)
     location: str | None = Field(default=None, max_length=120)
     title: str | None = Field(default=None, max_length=255)
-    mention: str | None = Field(default=None, max_length=255)
+    university: str | None = Field(default=None, max_length=255)
+    mention: str | None = Field(default=None, max_length=2000)
     graduation_date: date | None = None
     region_id: UUID | None = None
     state_id: UUID | None = None
@@ -150,6 +163,7 @@ class AdminMemberCreateRequest(BaseModel):
         "section",
         "location",
         "title",
+        "university",
         "mention",
         mode="before",
     )
@@ -159,6 +173,11 @@ class AdminMemberCreateRequest(BaseModel):
             return None
         cleaned = value.strip()
         return cleaned or None
+
+    @field_validator("mention", mode="after")
+    @classmethod
+    def normalize_mentions(cls, value: str | None) -> str | None:
+        return _normalize_mentions(value)
 
     @field_validator("status", mode="after")
     @classmethod
@@ -190,7 +209,8 @@ class AdminMemberUpdateRequest(BaseModel):
     section: str | None = Field(default=None, max_length=120)
     location: str | None = Field(default=None, max_length=120)
     title: str | None = Field(default=None, max_length=255)
-    mention: str | None = Field(default=None, max_length=255)
+    university: str | None = Field(default=None, max_length=255)
+    mention: str | None = Field(default=None, max_length=2000)
     graduation_date: date | None = None
     region_id: UUID | None = None
     state_id: UUID | None = None
@@ -215,6 +235,7 @@ class AdminMemberUpdateRequest(BaseModel):
         "section",
         "location",
         "title",
+        "university",
         "mention",
         mode="before",
     )
@@ -224,6 +245,11 @@ class AdminMemberUpdateRequest(BaseModel):
             return None
         cleaned = value.strip()
         return cleaned or None
+
+    @field_validator("mention", mode="after")
+    @classmethod
+    def normalize_mentions(cls, value: str | None) -> str | None:
+        return _normalize_mentions(value)
 
     @field_validator("status", mode="before")
     @classmethod
@@ -258,6 +284,7 @@ class AdminMemberResponse(BaseModel):
     municipality_id: UUID | None = None
     polling_place_id: UUID | None = None
     title: str | None
+    university: str | None
     mention: str | None
     graduation_date: date | None
     photo_filename: str | None
@@ -276,6 +303,24 @@ class AdminMemberResponse(BaseModel):
                 )
             }
         )
+
+
+class AdminMemberElectionParticipation(BaseModel):
+    """Roster link for one election. Never includes the ballot choice."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    election_id: UUID
+    title: str
+    status: str
+    start_time: datetime
+    end_time: datetime
+    scope_level: str
+    in_roster: bool
+    eligible: bool | None
+    eligibility_reason: str | None
+    has_voted: bool
+    voted_at: datetime | None
 
 
 class AdminMemberListResponse(BaseModel):
@@ -1175,6 +1220,7 @@ async def create_admin_member(
         section=payload.section or state_label,
         location=payload.location or municipality_label,
         title=payload.title,
+        university=payload.university,
         mention=payload.mention,
         graduation_date=payload.graduation_date,
         region_id=region_id,
@@ -1300,6 +1346,54 @@ async def get_admin_member(
     return AdminMemberResponse.from_member(member)
 
 
+@router.get(
+    "/members/{member_id}/elections",
+    response_model=list[AdminMemberElectionParticipation],
+)
+async def list_member_election_participation(
+    member_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_member_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> list[AdminMemberElectionParticipation]:
+    """Participation of one member across the organization's elections.
+
+    The ballot stays anonymous: this lists eligibility and whether they voted,
+    never the slate.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    await _get_organization_member(session, member_id, claims.org_id)
+    rows = (
+        await session.execute(
+            select(Election, MemberElectionStatus)
+            .outerjoin(
+                MemberElectionStatus,
+                (MemberElectionStatus.election_id == Election.id)
+                & (MemberElectionStatus.member_id == member_id)
+                & (MemberElectionStatus.organization_id == claims.org_id),
+            )
+            .where(Election.organization_id == claims.org_id)
+            .order_by(Election.start_time.desc())
+        )
+    ).all()
+    return [
+        AdminMemberElectionParticipation(
+            election_id=election.id,
+            title=election.title,
+            status=election.status,
+            start_time=election.start_time,
+            end_time=election.end_time,
+            scope_level=election.scope_level,
+            in_roster=status_row is not None,
+            eligible=status_row.eligible if status_row is not None else None,
+            eligibility_reason=status_row.eligibility_reason if status_row is not None else None,
+            has_voted=bool(status_row.has_voted) if status_row is not None else False,
+            voted_at=status_row.voted_at if status_row is not None else None,
+        )
+        for election, status_row in rows
+    ]
+
+
 @router.put("/members/{member_id}", response_model=AdminMemberResponse)
 async def update_admin_member(
     member_id: UUID,
@@ -1336,6 +1430,7 @@ async def update_admin_member(
     member.section = payload.section or state_label
     member.location = payload.location or municipality_label
     member.title = payload.title
+    member.university = payload.university
     member.mention = payload.mention
     member.graduation_date = payload.graduation_date
     member.region_id = region_id

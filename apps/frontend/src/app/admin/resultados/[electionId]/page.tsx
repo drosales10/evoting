@@ -6,8 +6,8 @@ import type { PublicElectionResult } from "@evoting/shared";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
 import { ResultsDashboard } from "@/components/results/ResultsDashboard";
+import { clientApiBase as apiUrl } from "@/lib/api-origin";
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type PageProps = {
   params: Promise<{ electionId: string }>;

@@ -9,13 +9,13 @@ import {
 } from "@/components/ceremony/CeremonyPlayer";
 import { datetimeLocalToUtcIso } from "@/lib/datetime";
 import { notify } from "@/lib/notify";
+import { clientApiBase as apiUrl } from "@/lib/api-origin";
 
 type AdminBroadcast = CeremonyBroadcast & {
   id: string;
   has_key_compare_milestone: boolean;
 };
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 function csrfHeaders(): HeadersInit {
   const csrfToken = window.sessionStorage.getItem("evoting_admin_csrf");

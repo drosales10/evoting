@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
+import { clientApiBase as apiUrl } from "@/lib/api-origin";
 
 type Election = {
   id: string;
@@ -13,7 +14,6 @@ type Election = {
   end_time: string;
 };
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function AdminResultadosPage() {
   const [elections, setElections] = useState<Election[]>([]);

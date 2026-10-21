@@ -12,6 +12,7 @@ import {
   sealPlaintext,
 } from "@/lib/sealed-ballot";
 import { flattenStatute, type StatuteTitleNode } from "@/lib/statute";
+import { clientApiBase as apiUrl } from "@/lib/api-origin";
 
 type Summary = {
   consultation_id: string;
@@ -36,7 +37,6 @@ type Choice = {
   comment: string;
 };
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export function StatuteBallot() {
   const [summaries, setSummaries] = useState<Summary[] | null>(null);

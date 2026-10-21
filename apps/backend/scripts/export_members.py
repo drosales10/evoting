@@ -96,6 +96,7 @@ async def export_members(organization_slug: str) -> dict:
                     "location": m.location,
                     "region": m.region,
                     "title": m.title,
+                    "university": m.university,
                     "mention": m.mention,
                     "graduation_date": json_safe(m.graduation_date),
                     "region_code": region_by_id[m.region_id].code if m.region_id else None,

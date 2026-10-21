@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
 import { notify } from "@/lib/notify";
+import { clientApiBase as apiUrl } from "@/lib/api-origin";
 
 type MemberTypeCount = {
   member_type: string;
@@ -25,7 +26,6 @@ type Overview = {
   encrypted_ballot_count: number;
 };
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function AdminHomePage() {
   const [overview, setOverview] = useState<Overview | null>(null);

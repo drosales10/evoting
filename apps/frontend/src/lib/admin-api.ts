@@ -2,9 +2,9 @@
  * Helpers de autenticación ADMIN (cookies HttpOnly + CSRF en sessionStorage).
  */
 
-import { sameOriginApi, unreachableApiResponse } from "@/lib/api-origin";
+import { clientApiBase, sameOriginApi, unreachableApiResponse } from "@/lib/api-origin";
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const apiUrl = clientApiBase;
 
 type RefreshPayload = {
   status?: string;

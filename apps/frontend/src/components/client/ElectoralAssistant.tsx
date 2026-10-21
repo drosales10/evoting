@@ -61,13 +61,8 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 function clientApiBase(): string {
-  const fromEnv = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
-  if (fromEnv) return fromEnv;
-  if (typeof window !== "undefined") {
-    // Same origin when env missing (production behind nginx).
-    return "";
-  }
-  return "http://localhost:8000";
+  // Mismo origen: nginx o el rewrite de Next llevan /api al backend.
+  return "";
 }
 
 export function ElectoralAssistant() {

@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
+import { clientApiBase as apiUrl, fetchAdminJson, TERRITORY_CACHE_MS } from "@/lib/api-origin";
+import { formatAppDate, formatAppDateTime } from "@/lib/datetime";
 import { notify } from "@/lib/notify";
 
 type Member = {
@@ -23,6 +25,7 @@ type Member = {
   section: string | null;
   location: string | null;
   title: string | null;
+  university: string | null;
   mention: string | null;
   graduation_date: string | null;
   region_id?: string | null;
@@ -65,7 +68,8 @@ type MemberFormState = {
   sex: string;
   alive: string;
   title: string;
-  mention: string;
+  university: string;
+  mentions: string[];
   graduation_date: string;
   region_id: string;
   state_id: string;
@@ -73,6 +77,49 @@ type MemberFormState = {
 };
 
 type PanelMode = "preview" | "edit" | null;
+type FichaTab = "datos" | "participacion";
+
+type MemberParticipation = {
+  election_id: string;
+  title: string;
+  status: string;
+  start_time: string;
+  end_time: string;
+  scope_level: string;
+  in_roster: boolean;
+  eligible: boolean | null;
+  eligibility_reason: string | null;
+  has_voted: boolean;
+  voted_at: string | null;
+};
+
+const ELECTION_STATUS: Record<string, string> = {
+  DRAFT: "Borrador",
+  REGISTRATION: "Registro",
+  FREEZE: "Padrón congelado",
+  ACTIVE: "En votación",
+  CLOSED: "Cerrada",
+  TALLIED: "Escrutada",
+};
+
+const SCOPE_LABEL: Record<string, string> = {
+  NATIONAL: "Nacional",
+  REGIONAL: "Regional",
+  STATE: "Estadal",
+};
+
+function participationLabel(item: MemberParticipation): string {
+  if (!item.in_roster) return "Aún no está en el padrón de esta elección";
+  if (item.has_voted) {
+    return item.voted_at
+      ? `Participó · ${formatAppDateTime(item.voted_at)}`
+      : "Participó";
+  }
+  if (item.eligible) return "Elegible, todavía sin voto";
+  return item.eligibility_reason
+    ? `No elegible · ${item.eligibility_reason}`
+    : "No elegible";
+}
 
 const SUGGESTED_MEMBER_TYPES = [
   "Activo",
@@ -84,7 +131,6 @@ const SUGGESTED_MEMBER_TYPES = [
   "Honorario",
 ] as const;
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 const emptyForm = (): MemberFormState => ({
   registry_code: "",
@@ -100,7 +146,8 @@ const emptyForm = (): MemberFormState => ({
   sex: "",
   alive: "",
   title: "",
-  mention: "",
+  university: "",
+  mentions: [""],
   graduation_date: "",
   region_id: "",
   state_id: "",
@@ -122,7 +169,8 @@ function memberToForm(member: Member): MemberFormState {
     sex: member.sex ?? "",
     alive: member.alive === true ? "true" : member.alive === false ? "false" : "",
     title: member.title ?? "",
-    mention: member.mention ?? "",
+    university: member.university ?? "",
+    mentions: splitMentions(member.mention),
     graduation_date: member.graduation_date ?? "",
     region_id: member.region_id ?? "",
     state_id: member.state_id ?? "",
@@ -145,12 +193,153 @@ function formToPayload(form: MemberFormState) {
     sex: form.sex.trim() || null,
     alive: form.alive === "true" ? true : form.alive === "false" ? false : null,
     title: form.title.trim() || null,
-    mention: form.mention.trim() || null,
+    university: form.university.trim() || null,
+    mention: joinMentions(form.mentions),
     graduation_date: form.graduation_date || null,
     region_id: form.region_id || null,
     state_id: form.state_id || null,
     municipality_id: form.municipality_id || null,
   };
+}
+
+function splitMentions(value: string | null | undefined): string[] {
+  const parts = (value ?? "")
+    .split(/\s*[;\n|]\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : [""];
+}
+
+function joinMentions(parts: string[]): string | null {
+  const cleaned = parts.map((part) => part.trim()).filter(Boolean);
+  return cleaned.length > 0 ? cleaned.join("\n") : null;
+}
+
+function MentionFields({
+  values,
+  onChange,
+}: {
+  values: string[];
+  onChange: (next: string[]) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      {values.map((value, index) => (
+        <div key={index} className="flex gap-2">
+          <input
+            className="input-field"
+            placeholder={index === 0 ? "Mención de carrera" : "Otra mención"}
+            value={value}
+            onChange={(event) => {
+              const next = [...values];
+              next[index] = event.target.value;
+              onChange(next);
+            }}
+          />
+          {values.length > 1 ? (
+            <button
+              type="button"
+              className="btn btn-secondary !px-3 text-red-700 dark:text-red-300"
+              onClick={() => onChange(values.filter((_, itemIndex) => itemIndex !== index))}
+              aria-label={`Quitar mención ${index + 1}`}
+            >
+              Quitar
+            </button>
+          ) : null}
+        </div>
+      ))}
+      <button
+        type="button"
+        className="btn btn-secondary !px-3 !py-1.5 text-xs"
+        onClick={() => onChange([...values, ""])}
+      >
+        Agregar mención
+      </button>
+    </div>
+  );
+}
+
+function participationBadge(item: MemberParticipation): { text: string; className: string } {
+  if (item.has_voted) {
+    return {
+      text: "Participó",
+      className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
+    };
+  }
+  if (item.eligible) {
+    return {
+      text: "Elegible",
+      className: "bg-[var(--surface)] text-[var(--primary)]",
+    };
+  }
+  if (item.in_roster) {
+    return {
+      text: "No elegible",
+      className: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
+    };
+  }
+  return {
+    text: "Sin padrón",
+    className: "bg-[var(--surface)] text-[var(--muted)]",
+  };
+}
+
+function MemberParticipationList({
+  busy,
+  items,
+  error,
+}: {
+  busy: boolean;
+  items: MemberParticipation[] | null;
+  error: string | null;
+}) {
+  if (busy || (items === null && !error)) {
+    return <p className="text-sm text-[var(--muted)]">Cargando participación…</p>;
+  }
+  if (error) {
+    return <p className="text-sm text-red-700 dark:text-red-300">{error}</p>;
+  }
+  if (!items || items.length === 0) {
+    return (
+      <p className="rounded-xl border border-dashed border-[var(--line)] px-4 py-6 text-sm text-[var(--muted)]">
+        La organización todavía no tiene elecciones.
+      </p>
+    );
+  }
+  const voted = items.filter((item) => item.has_voted).length;
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-[var(--muted)]">
+        {voted} de {items.length} elecciones con voto emitido. La papeleta no se muestra: el voto
+        sigue siendo secreto.
+      </p>
+      <ul className="space-y-2">
+        {items.map((item) => (
+          <li
+            key={item.election_id}
+            className="rounded-xl border border-[var(--line)] bg-[var(--background)] px-4 py-3"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="font-semibold text-[var(--ink)]">{item.title}</p>
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-bold ${participationBadge(item).className}`}
+              >
+                {participationBadge(item).text}
+              </span>
+            </div>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              {ELECTION_STATUS[item.status] ?? item.status}
+              {" · "}
+              {SCOPE_LABEL[item.scope_level] ?? item.scope_level}
+              {" · "}
+              {formatAppDate(item.start_time)} – {formatAppDate(item.end_time)}
+            </p>
+            <p className="mt-2 text-sm text-[var(--ink)]">{participationLabel(item)}</p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 export function PadronCatalog() {
@@ -168,33 +357,20 @@ export function PadronCatalog() {
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState(emptyForm());
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
+  const [fichaTab, setFichaTab] = useState<FichaTab>("datos");
+  const [participation, setParticipation] = useState<MemberParticipation[] | null>(null);
+  const [participationBusy, setParticipationBusy] = useState(false);
+  const [participationError, setParticipationError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Member | null>(null);
   const [editForm, setEditForm] = useState<MemberFormState>(emptyForm());
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
 
-  const loadSummary = useCallback(async () => {
-    try {
-      const response = await fetch(`${apiUrl()}/api/v1/admin/overview`, {
-        credentials: "include",
-        cache: "no-store",
-      });
-      if (!response.ok) return;
-      const payload = (await response.json()) as PadronSummary;
-      setSummary({
-        member_count: payload.member_count,
-        active_member_count: payload.active_member_count,
-        inactive_member_count: payload.inactive_member_count,
-        member_type_counts: payload.member_type_counts ?? [],
-        eligible_voter_count: payload.eligible_voter_count,
-        ineligible_voter_count: payload.ineligible_voter_count,
-      });
-    } catch {
-      /* El listado sigue siendo usable sin el resumen. */
-    }
-  }, []);
+  const requestRef = useRef(0);
 
   const load = useCallback(async () => {
+    const requestId = requestRef.current + 1;
+    requestRef.current = requestId;
     setBusy(true);
     try {
       const params = new URLSearchParams({
@@ -212,18 +388,19 @@ export function PadronCatalog() {
         cache: "no-store",
       });
       const payload = (await response.json()) as MemberList & { detail?: string };
+      if (requestId !== requestRef.current) return;
       if (!response.ok) {
         notify.apiError(payload, "No se pudo cargar el padrón.");
         return;
       }
       setData(payload);
-      await loadSummary();
     } catch {
+      if (requestId !== requestRef.current) return;
       notify.error("Error de red al cargar el padrón.");
     } finally {
-      setBusy(false);
+      if (requestId === requestRef.current) setBusy(false);
     }
-  }, [page, query, regionId, stateId, statusFilter, aliveFilter, loadSummary]);
+  }, [page, query, regionId, stateId, statusFilter, aliveFilter]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -233,15 +410,41 @@ export function PadronCatalog() {
   }, [load]);
 
   useEffect(() => {
-    void Promise.all([
-      fetch(`${apiUrl()}/api/v1/admin/territory/regions`, { credentials: "include" }),
-      fetch(`${apiUrl()}/api/v1/admin/territory/states`, { credentials: "include" }),
-      fetch(`${apiUrl()}/api/v1/admin/territory/municipalities`, { credentials: "include" }),
-    ]).then(async ([rRes, sRes, mRes]) => {
-      if (rRes.ok) setRegions((await rRes.json()) as TerritoryUnit[]);
-      if (sRes.ok) setStates((await sRes.json()) as TerritoryUnit[]);
-      if (mRes.ok) setMunicipalities((await mRes.json()) as TerritoryUnit[]);
+    let cancelled = false;
+    void fetchAdminJson<PadronSummary>("/api/v1/admin/overview", 20_000).then((payload) => {
+      if (cancelled || !payload) return;
+      setSummary({
+        member_count: payload.member_count,
+        active_member_count: payload.active_member_count,
+        inactive_member_count: payload.inactive_member_count,
+        member_type_counts: payload.member_type_counts ?? [],
+        eligible_voter_count: payload.eligible_voter_count,
+        ineligible_voter_count: payload.ineligible_voter_count,
+      });
     });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      fetchAdminJson<TerritoryUnit[]>("/api/v1/admin/territory/regions", TERRITORY_CACHE_MS),
+      fetchAdminJson<TerritoryUnit[]>("/api/v1/admin/territory/states", TERRITORY_CACHE_MS),
+      fetchAdminJson<TerritoryUnit[]>(
+        "/api/v1/admin/territory/municipalities",
+        TERRITORY_CACHE_MS,
+      ),
+    ]).then(([regions, states, municipalities]) => {
+      if (cancelled) return;
+      if (regions) setRegions(regions);
+      if (states) setStates(states);
+      if (municipalities) setMunicipalities(municipalities);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -341,6 +544,9 @@ export function PadronCatalog() {
       }
       setSelected(payload);
       setEditForm(memberToForm(payload));
+      setFichaTab("datos");
+      setParticipation(null);
+      setParticipationError(null);
       setPanelMode(mode);
     } finally {
       setBusy(false);
@@ -349,10 +555,49 @@ export function PadronCatalog() {
 
   function closePanel() {
     setPanelMode(null);
+    setFichaTab("datos");
+    setParticipation(null);
+    setParticipationError(null);
     setSelected(null);
     setEditForm(emptyForm());
     setPhotoUrl(null);
   }
+
+  useEffect(() => {
+    if (panelMode !== "preview" || !selected) return;
+    const memberId = selected.id;
+    let cancelled = false;
+    setParticipationBusy(true);
+    setParticipationError(null);
+    void (async () => {
+      try {
+        const response = await fetch(`${apiUrl()}/api/v1/admin/members/${memberId}/elections`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const payload = (await response.json()) as MemberParticipation[] & { detail?: string };
+        if (cancelled) return;
+        if (!response.ok) {
+          setParticipation(null);
+          setParticipationError("No se pudo cargar la participación electoral.");
+          notify.apiError(payload, "No se pudo cargar la participación electoral.");
+          return;
+        }
+        setParticipation(payload);
+      } catch {
+        if (!cancelled) {
+          setParticipation(null);
+          setParticipationError("No se pudo contactar la API.");
+          notify.error("No se pudo contactar la API.");
+        }
+      } finally {
+        if (!cancelled) setParticipationBusy(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [panelMode, selected]);
 
   async function saveMember(event: React.FormEvent) {
     event.preventDefault();
@@ -669,7 +914,7 @@ export function PadronCatalog() {
         </div>
 
         <form
-          className="grid gap-3 rounded-xl border border-dashed border-[var(--line)] p-4 md:grid-cols-2 lg:grid-cols-4"
+          className="grid items-start gap-3 rounded-xl border border-dashed border-[var(--line)] p-4 md:grid-cols-2 lg:grid-cols-4"
           onSubmit={(e) => void createMember(e)}
         >
           <input
@@ -787,10 +1032,17 @@ export function PadronCatalog() {
           />
           <input
             className="input-field"
-            placeholder="Mención"
-            value={form.mention}
-            onChange={(e) => setForm({ ...form, mention: e.target.value })}
+            placeholder="Universidad del título"
+            value={form.university}
+            onChange={(e) => setForm({ ...form, university: e.target.value })}
           />
+          <div className="md:col-span-2">
+            <p className="mb-2 text-sm font-bold text-[var(--ink)]">Menciones de carrera</p>
+            <MentionFields
+              values={form.mentions}
+              onChange={(mentions) => setForm({ ...form, mentions })}
+            />
+          </div>
           <button className="btn btn-primary lg:col-span-1" type="submit" disabled={busy}>
             Alta rápida
           </button>
@@ -924,6 +1176,37 @@ export function PadronCatalog() {
             </div>
 
             {panelMode === "preview" ? (
+              <div className="space-y-4">
+                <div role="tablist" aria-label="Ficha del miembro" className="flex gap-2 border-b border-[var(--line)]">
+                  {(
+                    [
+                      ["datos", "Datos"],
+                      ["participacion", "Participación"],
+                    ] as const
+                  ).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      role="tab"
+                      aria-selected={fichaTab === id}
+                      className={`-mb-px border-b-2 px-3 py-2 text-sm font-semibold ${
+                        fichaTab === id
+                          ? "border-[var(--primary)] text-[var(--ink)]"
+                          : "border-transparent text-[var(--muted)]"
+                      }`}
+                      onClick={() => setFichaTab(id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {fichaTab === "participacion" ? (
+                  <MemberParticipationList
+                    busy={participationBusy}
+                    items={participation}
+                    error={participationError}
+                  />
+                ) : (
               <div className="grid gap-6 md:grid-cols-[200px_1fr]">
                 <div className="space-y-3">
                   <div className="flex aspect-[3/4] items-center justify-center overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--background)]">
@@ -1000,14 +1283,15 @@ export function PadronCatalog() {
                         : (selected.location ?? "—"),
                     ],
                     ["Título", selected.title ?? "—"],
-                    ["Mención", selected.mention ?? "—"],
+                    ["Universidad", selected.university ?? "—"],
+                    ["Mención", selected.mention?.split("\n").filter(Boolean).join("\n") || "—"],
                     ["Fecha grado", selected.graduation_date ?? "—"],
                   ].map(([label, value]) => (
                     <div key={label} className="rounded-lg border border-[var(--line)] px-3 py-2">
                       <dt className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
                         {label}
                       </dt>
-                      <dd className="mt-1 text-sm font-medium">{value}</dd>
+                      <dd className="mt-1 whitespace-pre-line text-sm font-medium">{value}</dd>
                     </div>
                   ))}
                 </dl>
@@ -1027,6 +1311,8 @@ export function PadronCatalog() {
                     Eliminar
                   </button>
                 </div>
+              </div>
+                )}
               </div>
             ) : (
               <form className="grid gap-3 md:grid-cols-2" onSubmit={(e) => void saveMember(e)}>
@@ -1245,13 +1531,22 @@ export function PadronCatalog() {
                   />
                 </label>
                 <label className="text-sm font-bold">
-                  Mención
+                  Universidad del título
                   <input
                     className="input-field mt-1"
-                    value={editForm.mention}
-                    onChange={(e) => setEditForm({ ...editForm, mention: e.target.value })}
+                    value={editForm.university}
+                    onChange={(e) => setEditForm({ ...editForm, university: e.target.value })}
                   />
                 </label>
+                <div className="text-sm font-bold md:col-span-2">
+                  Menciones de carrera
+                  <div className="mt-1 font-normal">
+                    <MentionFields
+                      values={editForm.mentions}
+                      onChange={(mentions) => setEditForm({ ...editForm, mentions })}
+                    />
+                  </div>
+                </div>
                 <label className="text-sm font-bold">
                   Fecha de grado
                   <input

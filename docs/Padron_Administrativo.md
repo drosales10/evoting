@@ -6,6 +6,10 @@ El padrón administrativo es el registro organizacional que usan los operadores 
 
 Todos los endpoints de esta funcionalidad requieren sesión ADMIN, filtran por la organización (`org_id`) incluida en el token y aplican RBAC. La administración del padrón está limitada a los roles `SUPER_ADMIN` y `ELECTORAL_JUSTICE`.
 
+## Ficha del miembro
+
+La vista previa del padrón tiene dos pestañas: **Datos** y **Participación**. En Datos, el título universitario va acompañado de la universidad donde se obtuvo y de una o varias menciones de carrera. Las menciones se editan como una lista y se guardan en `members.mention`, una por línea. La segunda pestaña llama a `GET /api/v1/admin/members/{member_id}/elections` y lista cada elección de la organización con el vínculo del miembro: si está en el padrón congelado, si es elegible, el motivo cuando no lo es, y si ya emitió voto (`has_voted`, `voted_at`). No devuelve la plancha ni el contenido de `encrypted_ballots`.
+
 ## Contrato XLSX
 
 El archivo de referencia es `docs/Padron_Administrativo.xlsx`, hoja `Datos`. La importación acepta la hoja `Datos` o, si no existe, la primera hoja del libro. Los encabezados se comparan normalizados, pero el contrato conceptual conserva estos nombres y orden:
@@ -27,7 +31,9 @@ El archivo de referencia es `docs/Padron_Administrativo.xlsx`, hoja `Datos`. La 
 | `Región` | `region` (+ `region_id` si el código/nombre coincide) | Texto opcional (N2). Si coincide con `electoral_regions.code` o `name`, asigna FK. |
 | `Seccional` | `section` (+ `state_id` si coincide) | Texto opcional (N3). Si coincide con `electoral_states.code` o `name`, asigna FK y, si falta, hereda `region_id`. |
 | `Ubicación` | `location` | Texto opcional. |
-| `Mención` | `mention` | Texto opcional. |
+| `Título` | `title` | Texto opcional. |
+| `Universidad` | `university` | Texto opcional. Universidad donde obtuvo el título. La columna puede faltar en libros antiguos. |
+| `Mención` | `mention` | Una o varias menciones de carrera. En el XLSX se separan con `;`, `|` o un salto de línea. Se guardan una por línea. |
 | `Fecha Grado` | `graduation_date` | Fecha; acepta `YYYY-MM-DD`, `DD/MM/YYYY`, `DD-MM-YYYY` y `MM/DD/YYYY`. |
 | `Foto` | `photo_filename`; imagen mediante endpoint | El XLSX conserva el nombre/metadato. Los bytes se guardan en `photo_data` (`BYTEA`) cuando se cargan por el endpoint de fotos. |
 

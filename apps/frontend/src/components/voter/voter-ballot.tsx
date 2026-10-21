@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 
 import { VoterBallotReceipt } from "@/components/voter/voter-ballot-receipt";
+import { clientApiBase } from "@/lib/api-origin";
 import { formatApiDetail, formatApiError } from "@/lib/api-error";
 import { buildSlateIntegrityProof, randomNonceHex, sealPlaintext } from "@/lib/sealed-ballot";
 import { getVoterCsrfToken, voterFetch } from "@/lib/voter-api";
@@ -270,7 +271,7 @@ export function VoterBallot() {
 
   useEffect(() => {
     if (!voterSessionReady) return;
-    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiBase = clientApiBase();
     void (async () => {
       try {
         const response = await voterFetch(`${apiBase}/api/v1/voter/elections`, {
@@ -306,7 +307,7 @@ export function VoterBallot() {
     setSelectedSlate("");
     setElection(null);
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const apiBase = clientApiBase();
       const response = await voterFetch(`${apiBase}/api/v1/voter/elections/${id}`, {
         cache: "no-store",
       });
@@ -347,7 +348,7 @@ export function VoterBallot() {
         return;
       }
 
-      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const apiBase = clientApiBase();
       const issuanceResponse = await voterFetch(
         `${apiBase}/api/v1/voter/elections/${election.election_id}/issuance-token`,
         { method: "POST" },
@@ -588,7 +589,7 @@ export function VoterBallot() {
                 </span>
                 {election.slates.map((slate) => {
                   const selected = selectedSlate === slate.id;
-                  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+                  const apiUrl = clientApiBase();
                   return (
                     <label
                       key={slate.id}

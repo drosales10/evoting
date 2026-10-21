@@ -76,6 +76,7 @@ async def seed_members(*, data_path: Path, organization_slug: str | None = None)
                 "location": raw.get("location"),
                 "region": raw.get("region"),
                 "title": raw.get("title"),
+                "university": raw.get("university"),
                 "mention": raw.get("mention"),
                 "graduation_date": parse_date(raw.get("graduation_date")),
                 "region_id": region_id,

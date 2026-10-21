@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from "react";
 
+import { clientApiBase as apiUrl } from "@/lib/api-origin";
 import {
   CeremonyPlayer,
   type CeremonyBroadcast,
 } from "@/components/ceremony/CeremonyPlayer";
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export function CeremonyPublicSection({ electionId }: { electionId: string }) {
   const [broadcast, setBroadcast] = useState<CeremonyBroadcast | null>(null);

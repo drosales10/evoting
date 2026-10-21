@@ -7,6 +7,12 @@ import type { FeatureCollection } from "geojson";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
 import { notify } from "@/lib/notify";
+import {
+  clientApiBase as apiUrl,
+  fetchAdminJson,
+  shareJson,
+  TERRITORY_CACHE_MS,
+} from "@/lib/api-origin";
 
 const AdminMapCanvas = dynamic(
   () => import("@/components/admin/geovisor/AdminMapCanvas").then((m) => m.AdminMapCanvas),
@@ -16,7 +22,6 @@ const AdminMapCanvas = dynamic(
 type TerritoryUnit = { id: string; code: string; name: string; level: string };
 type Election = { id: string; title: string; status: string };
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 function mergeCollections(
   territory: FeatureCollection | null,
@@ -59,25 +64,29 @@ function AdminGeovisorInner() {
   const [importTarget, setImportTarget] = useState({ level: "N1", id: "" });
 
   const load = useCallback(async () => {
-    const territoryRes = await fetch(
-      `${apiUrl()}/api/v1/admin/geo/features?levels=${encodeURIComponent(levels)}`,
-      { credentials: "include", cache: "no-store" },
-    );
-    if (!territoryRes.ok) {
-      notify.error("No se pudieron cargar las capas territoriales.");
-      return;
-    }
-    const territory = (await territoryRes.json()) as FeatureCollection;
-
-    let results: FeatureCollection | null = null;
-    if (electionId) {
-      const resultsRes = await fetch(`${apiUrl()}/api/v1/admin/geo/results/${electionId}`, {
+    const featurePath = `/api/v1/admin/geo/features?levels=${encodeURIComponent(levels)}`;
+    const territoryPromise = shareJson<FeatureCollection>(featurePath, TERRITORY_CACHE_MS, async () => {
+      const response = await fetch(`${apiUrl()}${featurePath}`, {
         credentials: "include",
         cache: "no-store",
       });
-      if (resultsRes.ok) {
-        results = (await resultsRes.json()) as FeatureCollection;
-      }
+      if (!response.ok) return null;
+      return (await response.json()) as FeatureCollection;
+    });
+    const resultsPromise = electionId
+      ? shareJson<FeatureCollection>(`admin-geo-results:${electionId}`, 0, async () => {
+          const response = await fetch(`${apiUrl()}/api/v1/admin/geo/results/${electionId}`, {
+            credentials: "include",
+            cache: "no-store",
+          });
+          if (!response.ok) return null;
+          return (await response.json()) as FeatureCollection;
+        })
+      : Promise.resolve(null);
+    const [territory, results] = await Promise.all([territoryPromise, resultsPromise]);
+    if (!territory) {
+      notify.error("No se pudieron cargar las capas territoriales.");
+      return;
     }
 
     setData(mergeCollections(territory, results));
@@ -96,25 +105,24 @@ function AdminGeovisorInner() {
 
   useEffect(() => {
     void Promise.all([
-      fetch(`${apiUrl()}/api/v1/admin/territory/organization`, { credentials: "include" }),
-      fetch(`${apiUrl()}/api/v1/admin/territory/regions`, { credentials: "include" }),
-      fetch(`${apiUrl()}/api/v1/admin/territory/states`, { credentials: "include" }),
-      fetch(`${apiUrl()}/api/v1/admin/territory/municipalities`, { credentials: "include" }),
-      fetch(`${apiUrl()}/api/v1/admin/territory/polling-places`, { credentials: "include" }),
+      fetchAdminJson<TerritoryUnit>("/api/v1/admin/territory/organization", TERRITORY_CACHE_MS),
+      fetchAdminJson<TerritoryUnit[]>("/api/v1/admin/territory/regions", TERRITORY_CACHE_MS),
+      fetchAdminJson<TerritoryUnit[]>("/api/v1/admin/territory/states", TERRITORY_CACHE_MS),
+      fetchAdminJson<TerritoryUnit[]>("/api/v1/admin/territory/municipalities", TERRITORY_CACHE_MS),
+      fetchAdminJson<TerritoryUnit[]>("/api/v1/admin/territory/polling-places", TERRITORY_CACHE_MS),
       fetch(`${apiUrl()}/api/v1/admin/elections`, { credentials: "include" }),
     ])
-      .then(async ([oRes, rRes, sRes, mRes, pRes, eRes]) => {
-        if (oRes.ok) {
-          const org = (await oRes.json()) as TerritoryUnit;
+      .then(async ([org, regions, states, municipalities, pollingPlaces, eRes]) => {
+        if (org) {
           setOrganization(org);
           setImportTarget((current) =>
             current.level === "N1" && !current.id ? { level: "N1", id: org.id } : current,
           );
         }
-        if (rRes.ok) setRegions((await rRes.json()) as TerritoryUnit[]);
-        if (sRes.ok) setStates((await sRes.json()) as TerritoryUnit[]);
-        if (mRes.ok) setMunicipalities((await mRes.json()) as TerritoryUnit[]);
-        if (pRes.ok) setPollingPlaces((await pRes.json()) as TerritoryUnit[]);
+        if (regions) setRegions(regions);
+        if (states) setStates(states);
+        if (municipalities) setMunicipalities(municipalities);
+        if (pollingPlaces) setPollingPlaces(pollingPlaces);
         if (eRes.ok) {
           const list = (await eRes.json()) as Election[];
           setElections(list);

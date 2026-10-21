@@ -12,6 +12,7 @@ import {
 } from "@/components/admin/admin-overview";
 import { datetimeLocalToUtcIso, formatAppDateTime } from "@/lib/datetime";
 import { notify } from "@/lib/notify";
+import { clientApiBase as apiUrl, fetchAdminJson, TERRITORY_CACHE_MS } from "@/lib/api-origin";
 
 type TerritoryUnit = { id: string; code: string; name: string; parent_id?: string | null };
 type Election = {
@@ -25,7 +26,6 @@ type Election = {
   quorum_threshold_pct: string;
 };
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 const TABS: Array<{ id: ElectionsTab; label: string; hint: string }> = [
   {
@@ -195,13 +195,13 @@ export function ElectionsManager() {
   }, [elections]);
 
   async function load() {
-    const [rRes, sRes, eRes] = await Promise.all([
-      fetch(`${apiUrl()}/api/v1/admin/territory/regions`, { credentials: "include" }),
-      fetch(`${apiUrl()}/api/v1/admin/territory/states`, { credentials: "include" }),
+    const [regions, states, eRes] = await Promise.all([
+      fetchAdminJson<TerritoryUnit[]>("/api/v1/admin/territory/regions", TERRITORY_CACHE_MS),
+      fetchAdminJson<TerritoryUnit[]>("/api/v1/admin/territory/states", TERRITORY_CACHE_MS),
       fetch(`${apiUrl()}/api/v1/admin/elections`, { credentials: "include" }),
     ]);
-    if (rRes.ok) setRegions((await rRes.json()) as TerritoryUnit[]);
-    if (sRes.ok) setStates((await sRes.json()) as TerritoryUnit[]);
+    if (regions) setRegions(regions);
+    if (states) setStates(states);
     if (eRes.ok) {
       const list = (await eRes.json()) as Election[];
       setElections(list);

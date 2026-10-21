@@ -3,6 +3,7 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { adminFetch } from "@/lib/admin-api";
+import { clientApiBase } from "@/lib/api-origin";
 import { formatApiError } from "@/lib/api-error";
 import { datetimeLocalToUtcIso, formatAppDateTime } from "@/lib/datetime";
 import { notify } from "@/lib/notify";
@@ -303,7 +304,7 @@ export function AdminOverview({
   const [copiedElectionId, setCopiedElectionId] = useState<string | null>(null);
 
   async function loadData() {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     const [overviewResponse, membersResponse, electionsResponse] = await Promise.all([
       fetch(`${apiUrl}/api/v1/admin/overview`, { credentials: "include", cache: "no-store" }),
       fetch(`${apiUrl}/api/v1/admin/members?limit=50`, { credentials: "include", cache: "no-store" }),
@@ -371,7 +372,7 @@ export function AdminOverview({
     setMemberBusy(true);
     const form = new FormData(event.currentTarget);
     const file = form.get("member_file");
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     if (!(file instanceof File) || file.size === 0) {
       notify.error("Selecciona un archivo XLSX.");
       setMemberBusy(false);
@@ -409,7 +410,7 @@ export function AdminOverview({
     setPhotoBusyId(memberId);
     const form = new FormData();
     form.append("file", file);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
 
     try {
       const response = await fetch(`${apiUrl}/api/v1/admin/members/${memberId}/photo`, {
@@ -437,7 +438,7 @@ export function AdminOverview({
     setMemberBusy(true);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
 
     try {
       const response = await fetch(`${apiUrl}/api/v1/admin/members`, {
@@ -484,7 +485,7 @@ export function AdminOverview({
     const form = new FormData(formElement);
     const startTime = String(form.get("start_time") ?? "");
     const endTime = String(form.get("end_time") ?? "");
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
 
     try {
       const response = await fetch(`${apiUrl}/api/v1/admin/elections`, {
@@ -527,7 +528,7 @@ export function AdminOverview({
     action: "open-registration" | "freeze",
   ) {
     setLifecycleBusyId(election.id);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     try {
       const response = await fetch(
         `${apiUrl}/api/v1/admin/elections/${election.id}/${action}`,
@@ -560,7 +561,7 @@ export function AdminOverview({
 
   async function handleCloseElection(election: AdminElection, forcePilot: boolean) {
     setLifecycleBusyId(election.id);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     const csrfToken = window.sessionStorage.getItem("evoting_admin_csrf");
     if (!csrfToken) {
       notify.error("Sesión ADMIN sin CSRF. Inicia sesión nuevamente.");
@@ -613,7 +614,7 @@ export function AdminOverview({
     const form = new FormData(formElement);
     const publicKey = String(form.get("election_public_key") ?? "").trim();
     const signingPublicKey = String(form.get("election_signing_public_key") ?? "").trim();
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     const csrfToken = window.sessionStorage.getItem("evoting_admin_csrf");
     if (!csrfToken) {
       notify.error("Sesión ADMIN sin CSRF. Inicia sesión nuevamente.");
@@ -688,7 +689,7 @@ export function AdminOverview({
     setTallyBusyId(election.id);
     setTallyFeedback(null);
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     const csrfToken = window.sessionStorage.getItem("evoting_admin_csrf");
     if (!csrfToken) {
       const text = "Sesión ADMIN sin CSRF. Inicia sesión nuevamente.";
@@ -798,7 +799,7 @@ export function AdminOverview({
   async function loadAudit(election: AdminElection) {
     setAuditElection(election);
     setAuditBusy(true);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     try {
       const payload = await requestApiJson<AdminElectionAudit[]>(
         `${apiUrl}/api/v1/admin/elections/${election.id}/audit`,
@@ -819,7 +820,7 @@ export function AdminOverview({
   ) {
     setEligibilityElection(election);
     setEligibilityBusy(true);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     const query = filter === "all" ? "" : `?eligible=${filter === "eligible"}`;
     try {
       const response = await fetch(
@@ -844,7 +845,7 @@ export function AdminOverview({
   }
 
   async function loadAssignmentEligibleMembers(election: AdminElection) {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     try {
       const response = await fetch(
         `${apiUrl}/api/v1/admin/elections/${election.id}/eligibility/members?eligible=true`,
@@ -865,7 +866,7 @@ export function AdminOverview({
     setSlateElection(election);
     setSelectedSlate(null);
     setCandidates([]);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     try {
       const payload = await requestApiJson<AdminSlate[]>(
         `${apiUrl}/api/v1/admin/elections/${election.id}/slates`,
@@ -883,7 +884,7 @@ export function AdminOverview({
 
   async function loadCandidates(slate: AdminSlate) {
     setSelectedSlate(slate);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     try {
       const payload = await requestApiJson<AdminCandidate[]>(
         `${apiUrl}/api/v1/admin/slates/${slate.id}/candidates`,
@@ -904,7 +905,7 @@ export function AdminOverview({
     setSlateBusy(true);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     try {
       const proxyMemberId = String(form.get("proxy_member_id") ?? "").trim();
       const payload = await requestApiJson<AdminSlate>(
@@ -938,7 +939,7 @@ export function AdminOverview({
     setCandidateBusy(true);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     try {
       const payload = await requestApiJson<AdminCandidate>(
         `${apiUrl}/api/v1/admin/slates/${selectedSlate.id}/candidates`,
@@ -973,7 +974,7 @@ export function AdminOverview({
 
   async function loadPositions(election: AdminElection) {
     setSelectedElection(election);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     try {
       const payload = await requestApiJson<AdminPosition[]>(
         `${apiUrl}/api/v1/admin/elections/${election.id}/positions`,
@@ -993,7 +994,7 @@ export function AdminOverview({
     setPositionBusy(true);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
 
     try {
       const response = await fetch(
@@ -1031,7 +1032,7 @@ export function AdminOverview({
     return <div className="notice"><p>{loadError ?? "Cargando resumen administrativo…"}</p></div>;
   }
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const apiUrl = clientApiBase();
   const isElectionsFocus = focus === "elections";
   const inCicloTab = isElectionsFocus && electionsTab === "ciclo";
   const showMetricsStrip =

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import type { FeatureCollection } from "geojson";
 
 import { CeremonyDrawer } from "@/components/ceremony/CeremonyDrawer";
+import { clientApiBase, shareJson } from "@/lib/api-origin";
 
 const ClientMapView = dynamic(
   () => import("@/components/client/geovisor/ClientMapView").then((m) => m.ClientMapView),
@@ -45,13 +46,7 @@ function mergeCollections(
   return { type: "FeatureCollection", features: Array.from(byKey.values()) };
 }
 
-export function ClienteGeovisorClient({
-  mapboxToken,
-  apiUrl,
-}: {
-  mapboxToken: string;
-  apiUrl: string;
-}) {
+export function ClienteGeovisorClient({ mapboxToken }: { mapboxToken: string }) {
   const [elections, setElections] = useState<Election[]>([]);
   const [electionId, setElectionId] = useState("");
   const [geojson, setGeojson] = useState<FeatureCollection | null>(null);
@@ -59,10 +54,15 @@ export function ClienteGeovisorClient({
   const [info, setInfo] = useState<string | null>(null);
 
   useEffect(() => {
-    void fetch(`${apiUrl}/api/v1/public/elections`, { cache: "no-store" })
-      .then(async (r) => {
-        if (!r.ok) return;
-        const list = (await r.json()) as Election[];
+    void shareJson<Election[]>("public-elections", 15_000, async () => {
+      const response = await fetch(`${clientApiBase()}/api/v1/public/elections`, {
+        cache: "no-store",
+      });
+      if (!response.ok) return null;
+      return (await response.json()) as Election[];
+    })
+      .then((list) => {
+        if (!list) return;
         setElections(list);
         const preferred =
           list.find((e) => e.has_live) ??
@@ -77,27 +77,32 @@ export function ClienteGeovisorClient({
         if (preferred) setElectionId(preferred.id);
       })
       .catch(() => undefined);
-  }, [apiUrl]);
+  }, []);
 
   useEffect(() => {
     if (!electionId) return;
     let cancelled = false;
     void (async () => {
       try {
-        const [territoryRes, resultsRes] = await Promise.all([
-          fetch(`${apiUrl}/api/v1/public/geo/territory/${electionId}?levels=N1,N2,N3,N4,N5`, {
-            cache: "no-store",
+        const territoryPath = `/api/v1/public/geo/territory/${electionId}?levels=N1,N2,N3,N4,N5`;
+        const [territory, results] = await Promise.all([
+          shareJson<FeatureCollection>(territoryPath, 60_000, async () => {
+            const response = await fetch(`${clientApiBase()}${territoryPath}`, {
+              cache: "no-store",
+            });
+            if (!response.ok) return null;
+            return (await response.json()) as FeatureCollection;
           }),
-          fetch(`${apiUrl}/api/v1/public/geo/results/${electionId}`, { cache: "no-store" }),
+          shareJson<FeatureCollection>(`public-geo-results:${electionId}`, 0, async () => {
+            const response = await fetch(
+              `${clientApiBase()}/api/v1/public/geo/results/${electionId}`,
+              { cache: "no-store" },
+            );
+            if (!response.ok) return null;
+            return (await response.json()) as FeatureCollection;
+          }),
         ]);
         if (cancelled) return;
-
-        const territory = territoryRes.ok
-          ? ((await territoryRes.json()) as FeatureCollection)
-          : null;
-        const results = resultsRes.ok
-          ? ((await resultsRes.json()) as FeatureCollection)
-          : null;
 
         if (!territory && !results) {
           setGeojson(null);
@@ -123,7 +128,7 @@ export function ClienteGeovisorClient({
     return () => {
       cancelled = true;
     };
-  }, [apiUrl, electionId]);
+  }, [electionId]);
 
   return (
     <div className="space-y-4">

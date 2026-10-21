@@ -4,6 +4,12 @@ import { useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
 import { notify } from "@/lib/notify";
+import {
+  clientApiBase as apiUrl,
+  fetchAdminJson,
+  invalidateCachedJson,
+  TERRITORY_CACHE_MS,
+} from "@/lib/api-origin";
 
 type Unit = {
   id: string;
@@ -13,7 +19,6 @@ type Unit = {
   parent_id?: string | null;
 };
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export function TerritoryManager() {
   const [regions, setRegions] = useState<Unit[]>([]);
@@ -26,16 +31,16 @@ export function TerritoryManager() {
   const [placeForm, setPlaceForm] = useState({ code: "", name: "", parent_id: "" });
 
   async function load() {
-    const [rRes, sRes, mRes, pRes] = await Promise.all([
-      fetch(`${apiUrl()}/api/v1/admin/territory/regions`, { credentials: "include" }),
-      fetch(`${apiUrl()}/api/v1/admin/territory/states`, { credentials: "include" }),
-      fetch(`${apiUrl()}/api/v1/admin/territory/municipalities`, { credentials: "include" }),
-      fetch(`${apiUrl()}/api/v1/admin/territory/polling-places`, { credentials: "include" }),
+    const [regions, states, municipalities, pollingPlaces] = await Promise.all([
+      fetchAdminJson<Unit[]>("/api/v1/admin/territory/regions", TERRITORY_CACHE_MS),
+      fetchAdminJson<Unit[]>("/api/v1/admin/territory/states", TERRITORY_CACHE_MS),
+      fetchAdminJson<Unit[]>("/api/v1/admin/territory/municipalities", TERRITORY_CACHE_MS),
+      fetchAdminJson<Unit[]>("/api/v1/admin/territory/polling-places", TERRITORY_CACHE_MS),
     ]);
-    if (rRes.ok) setRegions((await rRes.json()) as Unit[]);
-    if (sRes.ok) setStates((await sRes.json()) as Unit[]);
-    if (mRes.ok) setMunicipalities((await mRes.json()) as Unit[]);
-    if (pRes.ok) setPollingPlaces((await pRes.json()) as Unit[]);
+    if (regions) setRegions(regions);
+    if (states) setStates(states);
+    if (municipalities) setMunicipalities(municipalities);
+    if (pollingPlaces) setPollingPlaces(pollingPlaces);
   }
 
   useEffect(() => {
@@ -61,6 +66,7 @@ export function TerritoryManager() {
     }
     reset();
     notify.success(okMessage);
+    invalidateCachedJson("/api/v1/admin/territory");
     await load();
   }
 

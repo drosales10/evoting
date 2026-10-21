@@ -49,6 +49,13 @@ def test_voter_ballot_requires_auth() -> None:
     assert response.status_code == 401
 
 
+def test_member_election_participation_requires_auth() -> None:
+    response = client.get(
+        "/api/v1/admin/members/00000000-0000-0000-0000-000000000001/elections"
+    )
+    assert response.status_code == 401
+
+
 def test_public_verify_rejects_short_hash() -> None:
     response = client.get("/api/v1/public/verify/abcd")
     assert response.status_code == 422

@@ -9,6 +9,7 @@ import { formatApiError } from "@/lib/api-error";
 import { datetimeLocalToUtcIso, formatAppDateTime } from "@/lib/datetime";
 import { notify } from "@/lib/notify";
 import type { StatuteArticleResult, StatuteTitleNode } from "@/lib/statute";
+import { clientApiBase as apiUrl } from "@/lib/api-origin";
 
 type Summary = {
   id: string;
@@ -35,7 +36,6 @@ type ResultsPayload = {
   };
 };
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 async function readError(response: Response, fallback: string): Promise<string> {
   try {

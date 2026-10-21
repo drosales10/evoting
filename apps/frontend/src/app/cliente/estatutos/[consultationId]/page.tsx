@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { StatuteDocument } from "@/components/statute/StatuteDocument";
+import { clientApiBase } from "@/lib/api-origin";
 import type { StatuteArticleResult, StatuteTitleNode } from "@/lib/statute";
 
 type DocumentPayload = {
@@ -22,7 +23,7 @@ type ResultsPayload = {
   artifact: { articles?: StatuteArticleResult[] };
 };
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const apiUrl = clientApiBase();
 
 export default function ClienteEstatutoDetailPage() {
   const params = useParams<{ consultationId: string }>();

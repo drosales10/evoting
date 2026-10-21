@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { clientApiBase } from "@/lib/api-origin";
 import { formatApiError } from "@/lib/api-error";
 import { notify } from "@/lib/notify";
 
@@ -29,7 +30,7 @@ export default function VerifyArtifactPage() {
   useEffect(() => {
     const hash = params.artifactHash;
     if (!hash) return;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     void fetch(`${apiUrl}/api/v1/public/verify/${hash}`, { cache: "no-store" })
       .then(async (response) => {
         const payload = (await response.json()) as VerifyPayload;
@@ -78,7 +79,7 @@ export default function VerifyArtifactPage() {
           </ul>
           <a
             className="button button-primary inline-button"
-            href={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}${data.download_path}`}
+            href={data.download_path}
           >
             Descargar artefacto firmado
           </a>

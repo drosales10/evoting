@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { clientApiBase } from "@/lib/api-origin";
+
 type PublicStatute = {
   id: string;
   title: string;
@@ -11,7 +13,7 @@ type PublicStatute = {
   has_results: boolean;
 };
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const apiUrl = clientApiBase();
 
 const STATUS_LABEL: Record<string, string> = {
   ACTIVE: "En votación",

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/admin/DashboardShell";
 import { formatAppDateTime } from "@/lib/datetime";
+import { clientApiBase as apiUrl } from "@/lib/api-origin";
 
 type Election = { id: string; title: string; status: string };
 type AuditEvent = {
@@ -14,7 +15,6 @@ type AuditEvent = {
   details?: Record<string, unknown> | null;
 };
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function AdminAuditPage() {
   const [elections, setElections] = useState<Election[]>([]);

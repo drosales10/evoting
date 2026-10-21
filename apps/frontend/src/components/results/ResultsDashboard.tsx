@@ -7,8 +7,8 @@ import type { PublicElectionResult } from "@evoting/shared";
 import { ResultsParticipationMap } from "@/components/results/ResultsParticipationMap";
 import { summarizeElectionResult } from "@/components/results/summarizeElectionResult";
 import { formatAppDateTime } from "@/lib/datetime";
+import { clientApiBase as apiUrl } from "@/lib/api-origin";
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export function ResultsDashboard({
   result,

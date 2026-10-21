@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { clientApiBase } from "@/lib/api-origin";
 import { APP_TIMEZONE, formatAppDateTime } from "@/lib/datetime";
 import { formatApiError } from "@/lib/api-error";
 import { notify } from "@/lib/notify";
@@ -43,7 +44,7 @@ export default function PublicReciboPage() {
       return;
     }
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const apiUrl = clientApiBase();
     setLoading(true);
     setError(null);
     setData(null);

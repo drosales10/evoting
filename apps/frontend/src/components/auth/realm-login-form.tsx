@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
+import { clientApiBase } from "@/lib/api-origin";
 import { notify } from "@/lib/notify";
 
 type RealmLoginFormProps = {
@@ -44,7 +45,7 @@ export function RealmLoginForm({
       if (realm === "VOTER") {
         const organizationSlug = String(form.get("organization_slug") ?? "").trim();
         const identifier = String(form.get("identifier") ?? "").trim();
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+        const apiUrl = clientApiBase();
         const response = await fetch(`${apiUrl}/api/v1/auth/voter/request-otp`, {
           method: "POST",
           credentials: "include",
@@ -82,7 +83,7 @@ export function RealmLoginForm({
         email: String(form.get("identifier") ?? ""),
         password: String(form.get("credential") ?? ""),
       };
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const apiUrl = clientApiBase();
       const response = await fetch(`${apiUrl}/api/v1/auth/admin/login`, {
         method: "POST",
         credentials: "include",
@@ -127,7 +128,7 @@ export function RealmLoginForm({
     setBusy(true);
     try {
       const form = new FormData(event.currentTarget);
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const apiUrl = clientApiBase();
       const response = await fetch(`${apiUrl}/api/v1/auth/voter/verify-otp`, {
         method: "POST",
         credentials: "include",
@@ -169,7 +170,7 @@ export function RealmLoginForm({
 
     try {
       const form = new FormData(event.currentTarget);
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      const apiUrl = clientApiBase();
       const response = await fetch(`${apiUrl}/api/v1/auth/admin/mfa/verify`, {
         method: "POST",
         credentials: "include",

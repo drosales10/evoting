@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { clientApiBase as apiUrl } from "@/lib/api-origin";
 import {
   CeremonyPlayer,
   statusLabel,
   type CeremonyBroadcast,
 } from "@/components/ceremony/CeremonyPlayer";
 
-const apiUrl = () => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type ElectionSummary = {
   id: string;
@@ -35,6 +35,26 @@ export function CeremonyLiveBanner({
     let cancelled = false;
     void (async () => {
       try {
+        if (electionId) {
+          const response = await fetch(
+            `${apiUrl()}/api/v1/public/elections/${electionId}/broadcast`,
+            { cache: "no-store" },
+          );
+          if (!response.ok) {
+            if (!cancelled) setItems([]);
+            return;
+          }
+          const broadcast = (await response.json()) as CeremonyBroadcast;
+          if (!cancelled) {
+            setItems([
+              {
+                election: { id: electionId, title: broadcast.title, status: broadcast.status },
+                broadcast,
+              },
+            ]);
+          }
+          return;
+        }
         const electionsRes = await fetch(`${apiUrl()}/api/v1/public/elections`, {
           cache: "no-store",
         });
@@ -112,7 +132,9 @@ export function CeremonyLiveBanner({
                 Ceremonia YouTube · {statusLabel(broadcast.status)}
               </p>
               <h2 className="mt-1 text-xl font-semibold">{broadcast.title}</h2>
-              <p className="text-sm text-[var(--muted)]">{election.title}</p>
+              {election.title !== broadcast.title ? (
+                <p className="text-sm text-[var(--muted)]">{election.title}</p>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-2">
               {broadcast.status === "LIVE" ? (

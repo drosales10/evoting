@@ -95,7 +95,8 @@ class Member(CreatedAtMixin, Base):
         nullable=True,
     )
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    mention: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    university: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mention: Mapped[str | None] = mapped_column(Text, nullable=True)
     graduation_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     photo_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     photo_content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)

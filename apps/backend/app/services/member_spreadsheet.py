@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -10,6 +11,7 @@ from uuid import UUID
 
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 from openpyxl.drawing.image import Image as ExcelImage  # type: ignore[import-untyped]
+from openpyxl.utils import get_column_letter  # type: ignore[import-untyped]
 from PIL import Image as PilImage
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -37,11 +39,14 @@ EXCEL_HEADERS = (
     "Municipio",
     "Seccional",
     "Título",
+    "Universidad",
     "Mención",
     "Fecha Grado",
     "Foto",
 )
-OPTIONAL_HEADERS = frozenset({"Región", "Municipio", "Estado", "Ubicación", "Seccional", "Título"})
+OPTIONAL_HEADERS = frozenset(
+    {"Región", "Municipio", "Estado", "Ubicación", "Seccional", "Título", "Universidad"}
+)
 # Legacy header aliases → canonical EXCEL_HEADERS name
 HEADER_ALIASES = {
     "código": "Nro. CIV",
@@ -78,6 +83,7 @@ class ParsedMember:
     location: str | None
     ubicacion: str | None
     title: str | None
+    university: str | None
     mention: str | None
     graduation_date: date | None
     photo_filename: str | None
@@ -114,6 +120,14 @@ def _text(value: Any) -> str | None:
         return str(int(value))
     text = str(value).strip()
     return text or None
+
+
+def _mentions(value: Any) -> str | None:
+    text = _text(value)
+    if not text:
+        return None
+    parts = [part.strip() for part in re.split(r"[;\n|]+", text) if part.strip()]
+    return "\n".join(parts) or None
 
 
 def _required_text(value: Any, field_name: str) -> str:
@@ -199,7 +213,8 @@ def _parse_row(row: tuple[Any, ...], columns: dict[str, int], row_number: int) -
         location=_text(value("Municipio")),
         ubicacion=_text(value("Ubicación")),
         title=_text(value("Título")),
-        mention=_text(value("Mención")),
+        university=_text(value("Universidad")),
+        mention=_mentions(value("Mención")),
         graduation_date=_optional_date(value("Fecha Grado")),
         photo_filename=_text(value("Foto")),
     )
@@ -313,6 +328,7 @@ def _member_values(
         "section": section_text,
         "location": location_text,
         "title": member.title,
+        "university": member.university,
         "mention": member.mention,
         "graduation_date": member.graduation_date,
         "photo_filename": member.photo_filename,
@@ -520,6 +536,7 @@ def build_member_workbook(members: Iterable[Member]) -> BytesIO:
                 member.location,
                 None,
                 member.title,
+                member.university,
                 member.mention,
                 member.graduation_date,
                 member.photo_filename,
@@ -537,18 +554,19 @@ def build_member_workbook(members: Iterable[Member]) -> BytesIO:
                     excel_image = ExcelImage(buffer)
                     excel_image.width = 80
                     excel_image.height = 80
-                    sheet.add_image(excel_image, f"T{row_number}")
+                    photo_column = get_column_letter(EXCEL_HEADERS.index("Foto") + 1)
+                    sheet.add_image(excel_image, f"{photo_column}{row_number}")
                     sheet.row_dimensions[row_number].height = 60
             except Exception:
                 # Keep the metadata row even if a legacy photo cannot be embedded.
                 pass
 
     sheet.auto_filter.ref = sheet.dimensions
-    for column in "ABCDEFGHIJKLMNOPQRST":
-        sheet.column_dimensions[column].width = 18
+    for index in range(1, len(EXCEL_HEADERS) + 1):
+        sheet.column_dimensions[get_column_letter(index)].width = 18
     sheet.column_dimensions["B"].width = 32
     sheet.column_dimensions["D"].width = 30
-    sheet.column_dimensions["T"].width = 24
+    sheet.column_dimensions[get_column_letter(EXCEL_HEADERS.index("Foto") + 1)].width = 24
 
     output = BytesIO()
     workbook.save(output)
