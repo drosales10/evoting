@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { VoterBallotReceipt } from "@/components/voter/voter-ballot-receipt";
 import { clientApiBase } from "@/lib/api-origin";
@@ -72,6 +73,190 @@ function resolveCandidatePhotoUrl(apiUrl: string, photoUrl: string | null | unde
   if (!url) return null;
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
   return `${apiUrl}${url.startsWith("/") ? url : `/${url}`}`;
+}
+
+type CandidateProfileDocument = {
+  id: string;
+  kind: string;
+  title: string;
+  filename: string;
+  size_bytes: number;
+};
+
+type CandidateProfile = {
+  biography: string | null;
+  documents: CandidateProfileDocument[];
+};
+
+const DOCUMENT_KIND_LABELS: Record<string, string> = {
+  HOJA_DE_VIDA: "Hoja de vida",
+  TRABAJO_ACADEMICO: "Trabajo académico",
+  TRABAJO_CIENTIFICO: "Trabajo científico",
+};
+
+function CandidateDossierButton({
+  electionId,
+  candidate,
+}: {
+  electionId: string;
+  candidate: VoterCandidate;
+}) {
+  const [open, setOpen] = useState(false);
+  const [profile, setProfile] = useState<CandidateProfile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void (async () => {
+      try {
+        const response = await voterFetch(
+          `${clientApiBase()}/api/v1/voter/elections/${electionId}/candidates/${candidate.id}/profile`,
+          { cache: "no-store" },
+        );
+        const payload = (await response.json()) as CandidateProfile & { detail?: string };
+        if (cancelled) return;
+        if (!response.ok) {
+          setProfile(null);
+          setError(formatApiDetail(payload.detail) || "No se pudo cargar la hoja de vida.");
+          return;
+        }
+        setProfile(payload);
+      } catch {
+        if (!cancelled) setError("No se pudo contactar la API.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, electionId, candidate.id]);
+
+  async function openPdf(documentId: string) {
+    try {
+      const response = await voterFetch(
+        `${clientApiBase()}/api/v1/voter/elections/${electionId}/candidates/${candidate.id}/documents/${documentId}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) {
+        setError("No se pudo abrir el PDF.");
+        return;
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      window.open(objectUrl, "_blank", "noopener");
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch {
+      setError("No se pudo contactar la API.");
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className="ballot-dossier-btn"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        Hoja de vida
+      </button>
+      {open
+        ? createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 dark:bg-black/60"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={`dossier-${candidate.id}`}
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 text-left shadow-xl"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-sky-800 dark:text-sky-300">
+                  {candidate.position_title}
+                </p>
+                <h3 id={`dossier-${candidate.id}`} className="text-lg font-semibold text-[var(--ink)]">
+                  {candidate.member_full_name}
+                </h3>
+              </div>
+              <button
+                type="button"
+                className="rounded-full border border-[var(--line)] px-3 py-1.5 text-sm font-semibold text-[var(--ink)]"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setOpen(false);
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+            {loading ? <p className="text-sm text-[var(--muted)]">Cargando información…</p> : null}
+            {error ? <p className="text-sm text-red-700 dark:text-red-300">{error}</p> : null}
+            {profile ? (
+              <div className="space-y-4">
+                <section>
+                  <h4 className="text-sm font-bold text-[var(--ink)]">Reseña</h4>
+                  <p className="mt-1 whitespace-pre-wrap text-sm text-[var(--ink)]">
+                    {profile.biography?.trim() || "Sin reseña registrada."}
+                  </p>
+                </section>
+                <section>
+                  <h4 className="text-sm font-bold text-[var(--ink)]">Documentos</h4>
+                  {profile.documents.length === 0 ? (
+                    <p className="mt-1 text-sm text-[var(--muted)]">No hay PDF asociados.</p>
+                  ) : (
+                    <ul className="mt-2 space-y-2">
+                      {profile.documents.map((document) => (
+                        <li
+                          key={document.id}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--line)] bg-[var(--background)] px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-[var(--ink)]">{document.title}</p>
+                            <p className="text-xs text-[var(--muted)]">
+                              {DOCUMENT_KIND_LABELS[document.kind] ?? document.kind}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="rounded-full border border-[var(--line)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--primary)]"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              void openPdf(document.id);
+                            }}
+                          >
+                            Abrir PDF
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </div>
+            ) : null}
+          </div>
+        </div>,
+          document.body,
+        )
+        : null}
+    </>
+  );
 }
 
 function CandidatePhoto({
@@ -613,8 +798,14 @@ export function VoterBallot() {
                                   <span className="ballot-candidate-role">
                                     {candidate.position_title}
                                   </span>
-                                  <span className="ballot-candidate-name">
-                                    {candidate.member_full_name}
+                                  <span className="ballot-candidate-name-row">
+                                    <span className="ballot-candidate-name">
+                                      {candidate.member_full_name}
+                                    </span>
+                                    <CandidateDossierButton
+                                      electionId={election.election_id}
+                                      candidate={candidate}
+                                    />
                                   </span>
                                 </div>
                               </li>

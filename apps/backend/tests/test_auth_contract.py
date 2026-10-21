@@ -56,6 +56,20 @@ def test_member_election_participation_requires_auth() -> None:
     assert response.status_code == 401
 
 
+def test_member_documents_require_auth() -> None:
+    member_id = "00000000-0000-0000-0000-000000000001"
+    response = client.get(f"/api/v1/admin/members/{member_id}/documents")
+    assert response.status_code == 401
+
+
+def test_voter_candidate_profile_requires_auth() -> None:
+    response = client.get(
+        "/api/v1/voter/elections/00000000-0000-0000-0000-000000000001"
+        "/candidates/00000000-0000-0000-0000-000000000002/profile"
+    )
+    assert response.status_code == 401
+
+
 def test_public_verify_rejects_short_hash() -> None:
     response = client.get("/api/v1/public/verify/abcd")
     assert response.status_code == 422

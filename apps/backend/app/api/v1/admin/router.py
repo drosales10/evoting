@@ -5,6 +5,7 @@ from decimal import ROUND_CEILING, Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
+from urllib.parse import quote
 from uuid import UUID
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
@@ -27,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.api.v1.public.router import (
     PublicElectionResult,
@@ -49,6 +51,7 @@ from app.models import (
     ElectoralState,
     EncryptedBallot,
     Member,
+    MemberDocument,
     MemberElectionStatus,
     Organization,
     Position,
@@ -138,6 +141,7 @@ class AdminMemberCreateRequest(BaseModel):
     title: str | None = Field(default=None, max_length=255)
     university: str | None = Field(default=None, max_length=255)
     mention: str | None = Field(default=None, max_length=2000)
+    biography: str | None = Field(default=None, max_length=4000)
     graduation_date: date | None = None
     region_id: UUID | None = None
     state_id: UUID | None = None
@@ -165,6 +169,7 @@ class AdminMemberCreateRequest(BaseModel):
         "title",
         "university",
         "mention",
+        "biography",
         mode="before",
     )
     @classmethod
@@ -211,6 +216,7 @@ class AdminMemberUpdateRequest(BaseModel):
     title: str | None = Field(default=None, max_length=255)
     university: str | None = Field(default=None, max_length=255)
     mention: str | None = Field(default=None, max_length=2000)
+    biography: str | None = Field(default=None, max_length=4000)
     graduation_date: date | None = None
     region_id: UUID | None = None
     state_id: UUID | None = None
@@ -237,6 +243,7 @@ class AdminMemberUpdateRequest(BaseModel):
         "title",
         "university",
         "mention",
+        "biography",
         mode="before",
     )
     @classmethod
@@ -286,6 +293,7 @@ class AdminMemberResponse(BaseModel):
     title: str | None
     university: str | None
     mention: str | None
+    biography: str | None = None
     graduation_date: date | None
     photo_filename: str | None
     photo_content_type: str | None
@@ -1222,6 +1230,7 @@ async def create_admin_member(
         title=payload.title,
         university=payload.university,
         mention=payload.mention,
+        biography=payload.biography,
         graduation_date=payload.graduation_date,
         region_id=region_id,
         state_id=state_id,
@@ -1432,6 +1441,7 @@ async def update_admin_member(
     member.title = payload.title
     member.university = payload.university
     member.mention = payload.mention
+    member.biography = payload.biography
     member.graduation_date = payload.graduation_date
     member.region_id = region_id
     member.state_id = state_id
@@ -1543,6 +1553,184 @@ async def get_admin_member_photo(
         media_type=member.photo_content_type,
         headers={"Cache-Control": "private, no-store"},
     )
+
+
+MEMBER_DOCUMENT_KINDS = {"HOJA_DE_VIDA", "TRABAJO_ACADEMICO", "TRABAJO_CIENTIFICO"}
+MAX_MEMBER_DOCUMENTS = 20
+MAX_MEMBER_DOCUMENT_BYTES = 10 * 1024 * 1024
+
+
+class AdminMemberDocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    id: UUID
+    kind: str
+    title: str
+    filename: str
+    size_bytes: int
+    created_at: datetime
+
+
+def _document_disposition(filename: str) -> str:
+    safe_name = Path(filename).name.replace('"', "") or "documento.pdf"
+    return f"inline; filename*=UTF-8''{quote(safe_name)}"
+
+
+@router.get(
+    "/members/{member_id}/documents",
+    response_model=list[AdminMemberDocumentResponse],
+)
+async def list_admin_member_documents(
+    member_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_member_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> list[AdminMemberDocumentResponse]:
+    """List PDF metadata for a member without returning the file bytes."""
+    response.headers["Cache-Control"] = "no-store"
+    await _get_organization_member(session, member_id, claims.org_id)
+    rows = (
+        await session.scalars(
+            select(MemberDocument)
+            .options(defer(MemberDocument.data))
+            .where(
+                MemberDocument.member_id == member_id,
+                MemberDocument.organization_id == claims.org_id,
+            )
+            .order_by(MemberDocument.created_at.asc())
+        )
+    ).all()
+    return [AdminMemberDocumentResponse.model_validate(row) for row in rows]
+
+
+@router.post(
+    "/members/{member_id}/documents",
+    response_model=AdminMemberDocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_admin_member_document(
+    member_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_member_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    file: Annotated[UploadFile, File(...)],
+    title: Annotated[str, Form(...)],
+    kind: Annotated[str, Form(...)],
+) -> AdminMemberDocumentResponse:
+    """Store a PDF curriculum or academic work for a roster member."""
+    response.headers["Cache-Control"] = "no-store"
+    member = await _get_organization_member(session, member_id, claims.org_id)
+    normalized_kind = kind.strip().upper()
+    if normalized_kind not in MEMBER_DOCUMENT_KINDS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El tipo de documento no es válido.",
+        )
+    cleaned_title = title.strip()
+    if not cleaned_title or len(cleaned_title) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El título del documento debe tener entre 1 y 200 caracteres.",
+        )
+    content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
+    if content_type not in {"application/pdf", "application/x-pdf", "application/octet-stream", ""}:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Solo se aceptan archivos PDF.",
+        )
+    content = await file.read(MAX_MEMBER_DOCUMENT_BYTES + 1)
+    if len(content) > MAX_MEMBER_DOCUMENT_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="El PDF supera el límite de 10 MB.",
+        )
+    if not content.startswith(b"%PDF"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El archivo no es un PDF válido.",
+        )
+    current_count = await session.scalar(
+        select(func.count())
+        .select_from(MemberDocument)
+        .where(
+            MemberDocument.member_id == member.id,
+            MemberDocument.organization_id == claims.org_id,
+        )
+    )
+    if (current_count or 0) >= MAX_MEMBER_DOCUMENTS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cada miembro puede tener hasta 20 documentos.",
+        )
+    document = MemberDocument(
+        organization_id=claims.org_id,
+        member_id=member.id,
+        kind=normalized_kind,
+        title=cleaned_title,
+        filename=Path(file.filename or "documento.pdf").name[:255],
+        content_type="application/pdf",
+        data=content,
+        sha256=hashlib.sha256(content).hexdigest(),
+        size_bytes=len(content),
+    )
+    session.add(document)
+    await session.commit()
+    await session.refresh(document)
+    return AdminMemberDocumentResponse.model_validate(document)
+
+
+@router.get("/members/{member_id}/documents/{document_id}")
+async def get_admin_member_document(
+    member_id: UUID,
+    document_id: UUID,
+    claims: Annotated[AccessClaims, Depends(_require_member_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> Response:
+    """Serve one stored PDF to an authorized roster manager."""
+    await _get_organization_member(session, member_id, claims.org_id)
+    document = await session.get(MemberDocument, document_id)
+    if (
+        document is None
+        or document.member_id != member_id
+        or document.organization_id != claims.org_id
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Documento no encontrado")
+    return Response(
+        content=document.data,
+        media_type="application/pdf",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": _document_disposition(document.filename),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.delete(
+    "/members/{member_id}/documents/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def delete_admin_member_document(
+    member_id: UUID,
+    document_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(_require_member_manager)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> Response:
+    """Remove one PDF from a member profile."""
+    response.headers["Cache-Control"] = "no-store"
+    await _get_organization_member(session, member_id, claims.org_id)
+    document = await session.get(MemberDocument, document_id)
+    if (
+        document is None
+        or document.member_id != member_id
+        or document.organization_id != claims.org_id
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Documento no encontrado")
+    await session.delete(document)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/elections", response_model=list[AdminElectionResponse])

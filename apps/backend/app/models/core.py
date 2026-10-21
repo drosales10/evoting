@@ -103,6 +103,31 @@ class Member(CreatedAtMixin, Base):
     photo_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     photo_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     photo_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    biography: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class MemberDocument(CreatedAtMixin, Base):
+    __tablename__ = "member_documents"
+    __table_args__ = (Index("ix_member_documents_member", "organization_id", "member_id"),)
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+    )
+    member_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("members.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class Election(CreatedAtMixin, Base):

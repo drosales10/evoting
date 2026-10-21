@@ -8,7 +8,13 @@ Todos los endpoints de esta funcionalidad requieren sesión ADMIN, filtran por l
 
 ## Ficha del miembro
 
-La vista previa del padrón tiene dos pestañas: **Datos** y **Participación**. En Datos, el título universitario va acompañado de la universidad donde se obtuvo y de una o varias menciones de carrera. Las menciones se editan como una lista y se guardan en `members.mention`, una por línea. La segunda pestaña llama a `GET /api/v1/admin/members/{member_id}/elections` y lista cada elección de la organización con el vínculo del miembro: si está en el padrón congelado, si es elegible, el motivo cuando no lo es, y si ya emitió voto (`has_voted`, `voted_at`). No devuelve la plancha ni el contenido de `encrypted_ballots`.
+La vista previa del padrón tiene tres pestañas: **Datos**, **Documentos** y **Participación**. En Datos, el título universitario va acompañado de la universidad donde se obtuvo y de una o varias menciones de carrera. Las menciones se editan como una lista y se guardan en `members.mention`, una por línea.
+
+**Documentos** guarda la reseña breve en `members.biography` y los PDF del miembro en `member_documents`. Cada archivo se clasifica como hoja de vida, trabajo académico o trabajo científico. El listado no incluye los bytes; el PDF se abre con `GET /api/v1/admin/members/{member_id}/documents/{document_id}`.
+
+**Participación** llama a `GET /api/v1/admin/members/{member_id}/elections` y lista cada elección de la organización con el vínculo del miembro: si está en el padrón congelado, si es elegible, el motivo cuando no lo es, y si ya emitió voto (`has_voted`, `voted_at`). No devuelve la plancha ni el contenido de `encrypted_ballots`.
+
+Si el miembro integra una plancha, la boleta del elector muestra el botón **Hoja de vida** junto a su nombre. Ese botón consulta `GET /api/v1/voter/elections/{election_id}/candidates/{candidate_id}/profile` y solo entrega la reseña y los PDF a un elector elegible de la elección activa.
 
 ## Contrato XLSX
 

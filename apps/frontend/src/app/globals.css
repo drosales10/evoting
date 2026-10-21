@@ -289,6 +289,12 @@
   .ballot-candidate-name {
     @apply text-xs font-medium text-[var(--ink)];
   }
+  .ballot-candidate-name-row {
+    @apply flex flex-wrap items-center gap-2;
+  }
+  .ballot-dossier-btn {
+    @apply rounded-full border border-[var(--line)] bg-[var(--surface)] px-2 py-0.5 text-[0.65rem] font-semibold text-[var(--primary)] hover:border-[var(--primary)] dark:text-sky-300;
+  }
   .ballot-candidate-empty {
     @apply text-[var(--muted)];
   }

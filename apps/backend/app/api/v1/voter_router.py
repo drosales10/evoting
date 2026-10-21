@@ -1,7 +1,9 @@
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
@@ -21,6 +23,7 @@ from app.models import (
     Election,
     EncryptedBallot,
     Member,
+    MemberDocument,
     MemberElectionStatus,
     Position,
     Slate,
@@ -392,6 +395,136 @@ async def get_voter_candidate_photo(
         content=member.photo_data,
         media_type=member.photo_content_type,
         headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
+class VoterCandidateDocumentResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    kind: str
+    title: str
+    filename: str
+    size_bytes: int
+
+
+class VoterCandidateProfileResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: UUID
+    member_full_name: str
+    position_title: str
+    biography: str | None
+    documents: list[VoterCandidateDocumentResponse]
+
+
+async def _candidate_for_voter(
+    session: AsyncSession,
+    *,
+    election: Election,
+    candidate_id: UUID,
+    claims: AccessClaims,
+) -> tuple[Candidate, Member, Position]:
+    row = (
+        await session.execute(
+            select(Candidate, Member, Position)
+            .options(defer(Member.photo_data))
+            .join(Member, Member.id == Candidate.member_id)
+            .join(Position, Position.id == Candidate.position_id)
+            .join(Slate, Slate.id == Candidate.slate_id)
+            .where(
+                Candidate.id == candidate_id,
+                Slate.election_id == election.id,
+                Slate.organization_id == claims.org_id,
+                Member.organization_id == claims.org_id,
+                Position.election_id == election.id,
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+    candidate, member, position = row
+    return candidate, member, position
+
+
+@router.get(
+    "/elections/{election_id}/candidates/{candidate_id}/profile",
+    response_model=VoterCandidateProfileResponse,
+)
+async def get_voter_candidate_profile(
+    election_id: UUID,
+    candidate_id: UUID,
+    response: Response,
+    claims: Annotated[AccessClaims, Depends(require_voter)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> VoterCandidateProfileResponse:
+    """Return the public roster profile of a slate candidate during an active election."""
+    response.headers["Cache-Control"] = "no-store"
+    election = await _get_active_election(session, election_id, claims)
+    await _require_eligible_voter(session, election=election, claims=claims)
+    _candidate, member, position = await _candidate_for_voter(
+        session, election=election, candidate_id=candidate_id, claims=claims
+    )
+    documents = (
+        await session.scalars(
+            select(MemberDocument)
+            .options(defer(MemberDocument.data))
+            .where(
+                MemberDocument.member_id == member.id,
+                MemberDocument.organization_id == claims.org_id,
+            )
+            .order_by(MemberDocument.created_at.asc())
+        )
+    ).all()
+    biography = (member.biography or "").strip() or None
+    return VoterCandidateProfileResponse(
+        candidate_id=candidate_id,
+        member_full_name=member.full_name,
+        position_title=position.title,
+        biography=biography,
+        documents=[
+            VoterCandidateDocumentResponse(
+                id=document.id,
+                kind=document.kind,
+                title=document.title,
+                filename=document.filename,
+                size_bytes=document.size_bytes,
+            )
+            for document in documents
+        ],
+    )
+
+
+@router.get("/elections/{election_id}/candidates/{candidate_id}/documents/{document_id}")
+async def get_voter_candidate_document(
+    election_id: UUID,
+    candidate_id: UUID,
+    document_id: UUID,
+    claims: Annotated[AccessClaims, Depends(require_voter)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> Response:
+    """Serve a candidate PDF only to an eligible voter of the active election."""
+    election = await _get_active_election(session, election_id, claims)
+    await _require_eligible_voter(session, election=election, claims=claims)
+    _candidate, member, _position = await _candidate_for_voter(
+        session, election=election, candidate_id=candidate_id, claims=claims
+    )
+    document = await session.get(MemberDocument, document_id)
+    if (
+        document is None
+        or document.member_id != member.id
+        or document.organization_id != claims.org_id
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Documento no encontrado")
+    safe_name = Path(document.filename).name.replace('"', "") or "documento.pdf"
+    return Response(
+        content=document.data,
+        media_type="application/pdf",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(safe_name)}",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

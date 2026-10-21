@@ -27,6 +27,7 @@ type Member = {
   title: string | null;
   university: string | null;
   mention: string | null;
+  biography: string | null;
   graduation_date: string | null;
   region_id?: string | null;
   state_id?: string | null;
@@ -70,6 +71,7 @@ type MemberFormState = {
   title: string;
   university: string;
   mentions: string[];
+  biography: string;
   graduation_date: string;
   region_id: string;
   state_id: string;
@@ -77,7 +79,7 @@ type MemberFormState = {
 };
 
 type PanelMode = "preview" | "edit" | null;
-type FichaTab = "datos" | "participacion";
+type FichaTab = "datos" | "participacion" | "documentos";
 
 type MemberParticipation = {
   election_id: string;
@@ -148,6 +150,7 @@ const emptyForm = (): MemberFormState => ({
   title: "",
   university: "",
   mentions: [""],
+  biography: "",
   graduation_date: "",
   region_id: "",
   state_id: "",
@@ -171,6 +174,7 @@ function memberToForm(member: Member): MemberFormState {
     title: member.title ?? "",
     university: member.university ?? "",
     mentions: splitMentions(member.mention),
+    biography: member.biography ?? "",
     graduation_date: member.graduation_date ?? "",
     region_id: member.region_id ?? "",
     state_id: member.state_id ?? "",
@@ -195,6 +199,7 @@ function formToPayload(form: MemberFormState) {
     title: form.title.trim() || null,
     university: form.university.trim() || null,
     mention: joinMentions(form.mentions),
+    biography: form.biography.trim() || null,
     graduation_date: form.graduation_date || null,
     region_id: form.region_id || null,
     state_id: form.state_id || null,
@@ -282,6 +287,277 @@ function participationBadge(item: MemberParticipation): { text: string; classNam
     text: "Sin padrón",
     className: "bg-[var(--surface)] text-[var(--muted)]",
   };
+}
+
+const DOCUMENT_KINDS = [
+  { value: "HOJA_DE_VIDA", label: "Hoja de vida" },
+  { value: "TRABAJO_ACADEMICO", label: "Trabajo académico" },
+  { value: "TRABAJO_CIENTIFICO", label: "Trabajo científico" },
+] as const;
+
+type MemberDocumentItem = {
+  id: string;
+  kind: string;
+  title: string;
+  filename: string;
+  size_bytes: number;
+  created_at: string;
+};
+
+function documentKindLabel(kind: string): string {
+  return DOCUMENT_KINDS.find((item) => item.value === kind)?.label ?? kind;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function MemberDocumentsPanel({
+  member,
+  onMemberUpdated,
+}: {
+  member: Member;
+  onMemberUpdated: (member: Member) => void;
+}) {
+  const [biography, setBiography] = useState(member.biography ?? "");
+  const [documents, setDocuments] = useState<MemberDocumentItem[]>([]);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [kind, setKind] = useState<(typeof DOCUMENT_KINDS)[number]["value"]>("HOJA_DE_VIDA");
+  const [savingBiography, setSavingBiography] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    setBiography(member.biography ?? "");
+  }, [member.id, member.biography]);
+
+  const loadDocuments = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(`${apiUrl()}/api/v1/admin/members/${member.id}/documents`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const payload = (await response.json()) as MemberDocumentItem[] & { detail?: string };
+      if (!response.ok) {
+        setDocuments([]);
+        setError("No se pudieron cargar los documentos.");
+        notify.apiError(payload, "No se pudieron cargar los documentos.");
+        return;
+      }
+      setDocuments(payload);
+    } catch {
+      setDocuments([]);
+      setError("No se pudo contactar la API.");
+      notify.error("No se pudo contactar la API.");
+    } finally {
+      setBusy(false);
+    }
+  }, [member.id]);
+
+  useEffect(() => {
+    void loadDocuments();
+  }, [loadDocuments]);
+
+  async function saveBiography() {
+    setSavingBiography(true);
+    try {
+      const response = await fetch(`${apiUrl()}/api/v1/admin/members/${member.id}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formToPayload({ ...memberToForm(member), biography })),
+      });
+      const payload = (await response.json()) as Member & { detail?: string };
+      if (!response.ok) {
+        notify.apiError(payload, "No se pudo guardar la reseña.");
+        return;
+      }
+      onMemberUpdated(payload);
+      notify.success("Reseña guardada.");
+    } finally {
+      setSavingBiography(false);
+    }
+  }
+
+  async function uploadDocument(file: File) {
+    const cleanedTitle = title.trim();
+    if (!cleanedTitle) {
+      notify.error("Escriba un título para el PDF.");
+      return;
+    }
+    setUploading(true);
+    const body = new FormData();
+    body.append("file", file);
+    body.append("title", cleanedTitle);
+    body.append("kind", kind);
+    try {
+      const response = await fetch(`${apiUrl()}/api/v1/admin/members/${member.id}/documents`, {
+        method: "POST",
+        credentials: "include",
+        body,
+      });
+      const payload = (await response.json()) as { detail?: string };
+      if (!response.ok) {
+        notify.apiError(payload, "No se pudo subir el PDF.");
+        return;
+      }
+      setTitle("");
+      notify.success("Documento agregado.");
+      await loadDocuments();
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function openDocument(documentId: string) {
+    try {
+      const response = await fetch(
+        `${apiUrl()}/api/v1/admin/members/${member.id}/documents/${documentId}`,
+        { credentials: "include", cache: "no-store" },
+      );
+      if (!response.ok) {
+        notify.error("No se pudo abrir el PDF.");
+        return;
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      window.open(objectUrl, "_blank", "noopener");
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch {
+      notify.error("No se pudo contactar la API.");
+    }
+  }
+
+  async function removeDocument(item: MemberDocumentItem) {
+    if (!window.confirm(`¿Quitar «${item.title}» de la ficha?`)) return;
+    const response = await fetch(
+      `${apiUrl()}/api/v1/admin/members/${member.id}/documents/${item.id}`,
+      { method: "DELETE", credentials: "include" },
+    );
+    if (!response.ok && response.status !== 204) {
+      const payload = (await response.json().catch(() => ({}))) as { detail?: string };
+      notify.apiError(payload, "No se pudo quitar el documento.");
+      return;
+    }
+    notify.success("Documento quitado.");
+    await loadDocuments();
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <label className="text-sm font-bold text-[var(--ink)]" htmlFor="member-biography">
+          Reseña breve
+          <textarea
+            id="member-biography"
+            className="input-field mt-1 min-h-32"
+            maxLength={4000}
+            value={biography}
+            onChange={(event) => setBiography(event.target.value)}
+            placeholder="Resumen de la trayectoria del miembro"
+          />
+        </label>
+        <button
+          type="button"
+          className="btn btn-primary mt-3"
+          disabled={savingBiography}
+          onClick={() => void saveBiography()}
+        >
+          {savingBiography ? "Guardando…" : "Guardar reseña"}
+        </button>
+      </div>
+      <div className="space-y-3">
+        <h4 className="text-sm font-bold text-[var(--ink)]">Documentos PDF</h4>
+        <p className="text-sm text-[var(--muted)]">
+          Hoja de vida y trabajos académicos o científicos. Cada archivo debe ser PDF y pesar como
+          máximo 10 MB.
+        </p>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="text-sm font-bold text-[var(--ink)]">
+            Título
+            <input
+              className="input-field mt-1"
+              maxLength={200}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="Nombre del documento"
+            />
+          </label>
+          <label className="text-sm font-bold text-[var(--ink)]">
+            Tipo
+            <select
+              className="input-field mt-1"
+              value={kind}
+              onChange={(event) =>
+                setKind(event.target.value as (typeof DOCUMENT_KINDS)[number]["value"])
+              }
+            >
+              {DOCUMENT_KINDS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label className="btn btn-secondary cursor-pointer !rounded-lg">
+          {uploading ? "Subiendo…" : "Agregar PDF"}
+          <input
+            type="file"
+            accept="application/pdf,.pdf"
+            className="hidden"
+            disabled={uploading}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void uploadDocument(file);
+              event.target.value = "";
+            }}
+          />
+        </label>
+        {busy ? <p className="text-sm text-[var(--muted)]">Cargando documentos…</p> : null}
+        {error ? <p className="text-sm text-red-700 dark:text-red-300">{error}</p> : null}
+        {!busy && !error && documents.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">Este miembro todavía no tiene documentos.</p>
+        ) : null}
+        <ul className="space-y-2">
+          {documents.map((item) => (
+            <li
+              key={item.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--line)] bg-[var(--background)] px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-[var(--ink)]">{item.title}</p>
+                <p className="text-xs text-[var(--muted)]">
+                  {documentKindLabel(item.kind)} · {item.filename} · {formatFileSize(item.size_bytes)}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="btn btn-secondary !px-3 !py-1.5 text-xs"
+                  onClick={() => void openDocument(item.id)}
+                >
+                  Abrir
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary !px-3 !py-1.5 text-xs text-red-700 dark:text-red-300"
+                  onClick={() => void removeDocument(item)}
+                >
+                  Quitar
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
 }
 
 function MemberParticipationList({
@@ -1181,6 +1457,7 @@ export function PadronCatalog() {
                   {(
                     [
                       ["datos", "Datos"],
+                      ["documentos", "Documentos"],
                       ["participacion", "Participación"],
                     ] as const
                   ).map(([id, label]) => (
@@ -1205,6 +1482,14 @@ export function PadronCatalog() {
                     busy={participationBusy}
                     items={participation}
                     error={participationError}
+                  />
+                ) : fichaTab === "documentos" ? (
+                  <MemberDocumentsPanel
+                    member={selected}
+                    onMemberUpdated={(payload) => {
+                      setSelected(payload);
+                      setEditForm(memberToForm(payload));
+                    }}
                   />
                 ) : (
               <div className="grid gap-6 md:grid-cols-[200px_1fr]">
@@ -1554,6 +1839,16 @@ export function PadronCatalog() {
                     type="date"
                     value={editForm.graduation_date}
                     onChange={(e) => setEditForm({ ...editForm, graduation_date: e.target.value })}
+                  />
+                </label>
+                <label className="text-sm font-bold md:col-span-2">
+                  Reseña breve
+                  <textarea
+                    className="input-field mt-1 min-h-32"
+                    maxLength={4000}
+                    value={editForm.biography}
+                    onChange={(e) => setEditForm({ ...editForm, biography: e.target.value })}
+                    placeholder="Resumen de la trayectoria del miembro"
                   />
                 </label>
                 <div className="flex flex-wrap gap-2 md:col-span-2">
